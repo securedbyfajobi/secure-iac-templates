@@ -1,0 +1,324 @@
+---
+# Linux System Hardening Playbook
+# Implements CIS Benchmark controls and security best practices
+
+- name: Linux System Hardening
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    compliance_level: "{{ compliance_level | default('medium') }}"
+    audit_log_max_file_size: 50
+    password_max_age: 90
+    password_min_age: 7
+    login_retries: 3
+
+  pre_tasks:
+    - name: Verify supported OS
+      assert:
+        that:
+          - ansible_os_family in ['RedHat', 'Debian']
+        fail_msg: "This playbook only supports RedHat and Debian family systems"
+
+    - name: Create audit directory
+      file:
+        path: /var/log/audit-hardening
+        state: directory
+        mode: '0750'
+        owner: root
+        group: root
+
+  tasks:
+    # Filesystem Configuration
+    - name: Ensure separate partition for /tmp exists
+      mount:
+        path: /tmp
+        src: tmpfs
+        fstype: tmpfs
+        opts: defaults,rw,nosuid,nodev,noexec,relatime,size=1G
+        state: mounted
+      when: compliance_level in ['high', 'critical']
+
+    # Kernel Parameter Hardening
+    - name: Configure network security parameters
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+        sysctl_file: /etc/sysctl.d/99-security.conf
+      loop:
+        - { name: 'net.ipv4.ip_forward', value: '0' }
+        - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+        - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+        - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
+        - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
+        - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+        - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+        - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
+        - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
+        - { name: 'net.ipv4.tcp_syncookies', value: '1' }
+        - { name: 'kernel.randomize_va_space', value: '2' }
+        - { name: 'kernel.dmesg_restrict', value: '1' }
+        - { name: 'kernel.kptr_restrict', value: '2' }
+
+    # SSH Hardening
+    - name: Configure SSH security settings
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: "^#?{{ item.key }}"
+        line: "{{ item.key }} {{ item.value }}"
+        state: present
+        backup: yes
+      loop:
+        - { key: 'Protocol', value: '2' }
+        - { key: 'PermitRootLogin', value: 'no' }
+        - { key: 'PermitEmptyPasswords', value: 'no' }
+        - { key: 'PasswordAuthentication', value: 'no' }
+        - { key: 'X11Forwarding', value: 'no' }
+        - { key: 'MaxAuthTries', value: '3' }
+        - { key: 'ClientAliveInterval', value: '300' }
+        - { key: 'ClientAliveCountMax', value: '2' }
+        - { key: 'LoginGraceTime', value: '60' }
+        - { key: 'Banner', value: '/etc/issue.net' }
+        - { key: 'Ciphers', value: 'chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' }
+        - { key: 'MACs', value: 'hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512' }
+        - { key: 'KexAlgorithms', value: 'curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256' }
+      notify: restart ssh
+
+    # User Account Security
+    - name: Set password aging controls
+      lineinfile:
+        dest: /etc/login.defs
+        regexp: "^{{ item.key }}"
+        line: "{{ item.key }} {{ item.value }}"
+        state: present
+      loop:
+        - { key: 'PASS_MAX_DAYS', value: "{{ password_max_age }}" }
+        - { key: 'PASS_MIN_DAYS', value: "{{ password_min_age }}" }
+        - { key: 'PASS_WARN_AGE', value: '7' }
+        - { key: 'LOGIN_RETRIES', value: "{{ login_retries }}" }
+        - { key: 'LOGIN_TIMEOUT', value: '60' }
+        - { key: 'UMASK', value: '027' }
+
+    # Audit Configuration
+    - name: Install auditd
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - auditd
+        - audispd-plugins
+      when: ansible_os_family == 'RedHat'
+
+    - name: Install auditd (Debian)
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - auditd
+        - audispd-plugins
+      when: ansible_os_family == 'Debian'
+
+    - name: Configure auditd rules
+      blockinfile:
+        path: /etc/audit/rules.d/audit.rules
+        block: |
+          # Remove any existing rules
+          -D
+
+          # Buffer Size
+          -b 8192
+
+          # Failure Mode
+          -f 1
+
+          # Audit the audit logs
+          -w /var/log/audit/ -p wa -k auditlog
+
+          # Audit system calls
+          -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+          -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+          -a always,exit -F arch=b64 -S clock_settime -k time-change
+          -a always,exit -F arch=b32 -S clock_settime -k time-change
+          -w /etc/localtime -p wa -k time-change
+
+          # Audit user/group modifications
+          -w /etc/group -p wa -k identity
+          -w /etc/passwd -p wa -k identity
+          -w /etc/gshadow -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          -w /etc/security/opasswd -p wa -k identity
+
+          # Audit network environment
+          -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+          -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale
+          -w /etc/issue -p wa -k system-locale
+          -w /etc/issue.net -p wa -k system-locale
+          -w /etc/hosts -p wa -k system-locale
+          -w /etc/sysconfig/network -p wa -k system-locale
+
+          # Audit login/logout events
+          -w /var/log/faillog -p wa -k logins
+          -w /var/log/lastlog -p wa -k logins
+          -w /var/log/tallylog -p wa -k logins
+
+          # Audit session initiation
+          -w /var/run/utmp -p wa -k session
+          -w /var/log/wtmp -p wa -k logins
+          -w /var/log/btmp -p wa -k logins
+
+          # Audit permission modifications
+          -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+          -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+          -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+          -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+
+          # Make the configuration immutable
+          -e 2
+        create: yes
+        backup: yes
+      notify: restart auditd
+
+    # Remove unnecessary services
+    - name: Disable unnecessary services
+      systemd:
+        name: "{{ item }}"
+        enabled: no
+        state: stopped
+      loop:
+        - avahi-daemon
+        - cups
+        - dhcpd
+        - slapd
+        - nfs
+        - rpcbind
+        - named
+        - vsftpd
+        - httpd
+        - dovecot
+        - smb
+        - squid
+        - snmpd
+      ignore_errors: yes
+
+    # File permissions
+    - name: Set secure permissions on critical files
+      file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { path: '/etc/passwd', mode: '0644' }
+        - { path: '/etc/shadow', mode: '0640', group: 'shadow' }
+        - { path: '/etc/group', mode: '0644' }
+        - { path: '/etc/gshadow', mode: '0640', group: 'shadow' }
+        - { path: '/etc/ssh/sshd_config', mode: '0600' }
+        - { path: '/etc/crontab', mode: '0600' }
+        - { path: '/etc/cron.hourly', mode: '0700' }
+        - { path: '/etc/cron.daily', mode: '0700' }
+        - { path: '/etc/cron.weekly', mode: '0700' }
+        - { path: '/etc/cron.monthly', mode: '0700' }
+        - { path: '/etc/cron.d', mode: '0700' }
+
+    # Firewall configuration
+    - name: Install and configure firewall
+      block:
+        - name: Install firewalld (RedHat)
+          package:
+            name: firewalld
+            state: present
+          when: ansible_os_family == 'RedHat'
+
+        - name: Install ufw (Debian)
+          package:
+            name: ufw
+            state: present
+          when: ansible_os_family == 'Debian'
+
+        - name: Configure basic firewall rules (RedHat)
+          firewalld:
+            service: ssh
+            permanent: yes
+            state: enabled
+            immediate: yes
+          when: ansible_os_family == 'RedHat'
+
+        - name: Configure basic firewall rules (Debian)
+          ufw:
+            rule: allow
+            name: OpenSSH
+          when: ansible_os_family == 'Debian'
+
+    # System banners
+    - name: Create security banners
+      copy:
+        content: |
+          **************************************************************************
+          * WARNING: This system is for authorized users only. All activity may  *
+          * be monitored and recorded. By using this system, you acknowledge     *
+          * that you have read and understood the security policies.             *
+          **************************************************************************
+        dest: "{{ item }}"
+        mode: '0644'
+        owner: root
+        group: root
+      loop:
+        - /etc/issue
+        - /etc/issue.net
+        - /etc/motd
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        name: sshd
+        state: restarted
+
+    - name: restart auditd
+      systemd:
+        name: auditd
+        state: restarted
+
+  post_tasks:
+    - name: Generate hardening report
+      copy:
+        content: |
+          Linux Hardening Complete - {{ ansible_date_time.iso8601 }}
+          =====================================
+          Host: {{ inventory_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Compliance Level: {{ compliance_level }}
+
+          Applied Controls:
+          - Kernel security parameters configured
+          - SSH hardening applied
+          - Audit logging enabled
+          - Unnecessary services disabled
+          - File permissions secured
+          - Firewall configured
+          - Security banners installed
+
+          Next Steps:
+          1. Review and test system functionality
+          2. Update security monitoring tools
+          3. Schedule regular compliance checks
+          4. Review user access controls
+        dest: /var/log/audit-hardening/hardening-report-{{ ansible_date_time.epoch }}.txt
+        mode: '0640'
+        owner: root
+        group: root
+
+    - name: Display completion message
+      debug:
+        msg: |
+          Linux hardening completed successfully!
+          Compliance level: {{ compliance_level }}
+          Report saved: /var/log/audit-hardening/hardening-report-{{ ansible_date_time.epoch }}.txt
+          Please reboot the system to ensure all changes are applied.
