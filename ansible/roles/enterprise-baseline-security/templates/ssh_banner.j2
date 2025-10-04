@@ -1,0 +1,45 @@
+{% if baseline_security_environment == 'production' %}
+********************************************************************************
+*                                                                              *
+*                           AUTHORIZED ACCESS ONLY                            *
+*                                                                              *
+********************************************************************************
+
+WARNING: This system is for authorized users only. All activities on this
+system are logged and monitored. Unauthorized access is strictly prohibited
+and may result in criminal prosecution to the fullest extent of the law.
+
+By accessing this system, you acknowledge that:
+- You are authorized to access this system
+- All activities are logged and may be monitored
+- Improper use may result in termination and/or legal action
+- You have no expectation of privacy
+
+{% if baseline_security_compliance_frameworks | length > 0 %}
+This system is configured to comply with: {{ baseline_security_compliance_frameworks | join(', ') }}
+{% endif %}
+
+Disconnect immediately if you are not an authorized user.
+
+********************************************************************************
+{% elif baseline_security_environment == 'staging' %}
+********************************************************************************
+*                                                                              *
+*                              STAGING ENVIRONMENT                            *
+*                                                                              *
+********************************************************************************
+
+WARNING: This is a staging environment. All activities are logged.
+Authorized personnel only.
+
+{% else %}
+********************************************************************************
+*                                                                              *
+*                           DEVELOPMENT ENVIRONMENT                           *
+*                                                                              *
+********************************************************************************
+
+Development Environment - Authorized Users Only
+All activities are logged for security purposes.
+
+{% endif %}

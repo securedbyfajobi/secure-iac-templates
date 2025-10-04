@@ -1,0 +1,716 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enterprise WAF with CloudFront Security - Advanced web application firewall with DDoS protection and threat intelligence'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment Configuration"
+        Parameters:
+          - Environment
+          - ApplicationName
+          - ComplianceFrameworks
+      - Label:
+          default: "WAF Configuration"
+        Parameters:
+          - WAFScope
+          - LoggingLevel
+          - EnableGeoBlocking
+          - AllowedCountries
+      - Label:
+          default: "CloudFront Configuration"
+        Parameters:
+          - OriginDomainName
+          - ViewerProtocolPolicy
+          - EnableLogging
+          - LoggingBucket
+      - Label:
+          default: "Security Configuration"
+        Parameters:
+          - RateLimitThreshold
+          - IPReputationThreshold
+          - EnableBotProtection
+          - CustomRuleActions
+    ParameterLabels:
+      Environment:
+        default: "Environment Name"
+      ApplicationName:
+        default: "Application Name"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+    Description: 'Environment name for resource tagging and configuration'
+
+  ApplicationName:
+    Type: String
+    Default: 'enterprise-web-app'
+    Description: 'Name of the application protected by WAF'
+    MinLength: 3
+    MaxLength: 64
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  ComplianceFrameworks:
+    Type: CommaDelimitedList
+    Default: 'SOC2,PCI-DSS'
+    Description: 'Comma-separated list of compliance frameworks (SOC2, PCI-DSS, HIPAA, NIST)'
+
+  WAFScope:
+    Type: String
+    Default: 'CLOUDFRONT'
+    AllowedValues: ['CLOUDFRONT', 'REGIONAL']
+    Description: 'WAF scope - CLOUDFRONT for global or REGIONAL for ALB/API Gateway'
+
+  LoggingLevel:
+    Type: String
+    Default: 'DETAILED'
+    AllowedValues: ['BASIC', 'DETAILED', 'VERBOSE']
+    Description: 'WAF logging level'
+
+  EnableGeoBlocking:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable geographic blocking'
+
+  AllowedCountries:
+    Type: CommaDelimitedList
+    Default: 'US,CA,GB,FR,DE,AU,JP'
+    Description: 'Comma-separated list of allowed country codes (ISO 3166-1 alpha-2)'
+
+  OriginDomainName:
+    Type: String
+    Description: 'Domain name of the origin server (ALB, S3, etc.)'
+    AllowedPattern: '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+  ViewerProtocolPolicy:
+    Type: String
+    Default: 'redirect-to-https'
+    AllowedValues: ['allow-all', 'redirect-to-https', 'https-only']
+    Description: 'CloudFront viewer protocol policy'
+
+  EnableLogging:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable CloudFront access logging'
+
+  LoggingBucket:
+    Type: String
+    Default: ''
+    Description: 'S3 bucket for CloudFront access logs (optional - will create if empty)'
+
+  RateLimitThreshold:
+    Type: Number
+    Default: 2000
+    MinValue: 100
+    MaxValue: 20000
+    Description: 'Rate limit threshold (requests per 5 minutes)'
+
+  IPReputationThreshold:
+    Type: String
+    Default: 'HIGH'
+    AllowedValues: ['LOW', 'MEDIUM', 'HIGH']
+    Description: 'IP reputation threshold for blocking'
+
+  EnableBotProtection:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable AWS WAF Bot Control'
+
+  CustomRuleActions:
+    Type: String
+    Default: 'BLOCK'
+    AllowedValues: ['ALLOW', 'BLOCK', 'COUNT']
+    Description: 'Default action for custom security rules'
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'production']
+  EnableGeoRestriction: !Equals [!Ref EnableGeoBlocking, 'true']
+  EnableCloudFrontLogging: !Equals [!Ref EnableLogging, 'true']
+  CreateLoggingBucket: !And
+    - !Equals [!Ref EnableLogging, 'true']
+    - !Equals [!Ref LoggingBucket, '']
+  EnableBotControl: !Equals [!Ref EnableBotProtection, 'true']
+  IsCloudFrontWAF: !Equals [!Ref WAFScope, 'CLOUDFRONT']
+  EnableAdvancedFeatures: !Or
+    - !Equals [!Ref Environment, 'production']
+    - !Equals [!Ref Environment, 'staging']
+
+Mappings:
+  ComplianceMapping:
+    SOC2:
+      LogRetentionDays: 90
+      RequireEncryption: true
+      AuditLevel: detailed
+    PCI-DSS:
+      LogRetentionDays: 365
+      RequireEncryption: true
+      AuditLevel: verbose
+    HIPAA:
+      LogRetentionDays: 2555  # 7 years
+      RequireEncryption: true
+      AuditLevel: verbose
+    NIST:
+      LogRetentionDays: 365
+      RequireEncryption: true
+      AuditLevel: detailed
+
+Resources:
+  # ============================================================================
+  # WAF WEB ACL AND RULES
+  # ============================================================================
+
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${ApplicationName}-${Environment}-waf'
+      Scope: !Ref WAFScope
+      DefaultAction:
+        Allow: {}
+      Rules:
+        # Rule 1: AWS Managed Core Rule Set
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 1
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRuleSetMetric
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules:
+                - Name: SizeRestrictions_BODY
+                - Name: GenericRFI_BODY
+
+        # Rule 2: Known Bad Inputs
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: KnownBadInputsRuleSetMetric
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+
+        # Rule 3: IP Reputation
+        - Name: AWSManagedRulesAmazonIpReputationList
+          Priority: 3
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: IpReputationListMetric
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+
+        # Rule 4: Bot Control (if enabled)
+        - !If
+          - EnableBotControl
+          - Name: AWSManagedRulesBotControlRuleSet
+            Priority: 4
+            OverrideAction:
+              None: {}
+            VisibilityConfig:
+              SampledRequestsEnabled: true
+              CloudWatchMetricsEnabled: true
+              MetricName: BotControlRuleSetMetric
+            Statement:
+              ManagedRuleGroupStatement:
+                VendorName: AWS
+                Name: AWSManagedRulesBotControlRuleSet
+                ManagedRuleGroupConfigs:
+                  - AWSManagedRulesBotControlRuleSet:
+                      InspectionLevel: TARGETED
+          - !Ref AWS::NoValue
+
+        # Rule 5: SQL Injection Protection
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 5
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: SQLiRuleSetMetric
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+
+        # Rule 6: Rate Limiting
+        - Name: RateLimitRule
+          Priority: 6
+          Action:
+            Block: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: RateLimitRuleMetric
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref RateLimitThreshold
+              AggregateKeyType: IP
+
+        # Rule 7: Geographic Restriction
+        - !If
+          - EnableGeoRestriction
+          - Name: GeoRestrictionRule
+            Priority: 7
+            Action:
+              Block: {}
+            VisibilityConfig:
+              SampledRequestsEnabled: true
+              CloudWatchMetricsEnabled: true
+              MetricName: GeoRestrictionRuleMetric
+            Statement:
+              NotStatement:
+                Statement:
+                  GeoMatchStatement:
+                    CountryCodes: !Ref AllowedCountries
+          - !Ref AWS::NoValue
+
+        # Rule 8: Custom Security Headers
+        - Name: SecurityHeadersRule
+          Priority: 8
+          Action:
+            Block: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: SecurityHeadersRuleMetric
+          Statement:
+            OrStatement:
+              Statements:
+                - ByteMatchStatement:
+                    SearchString: '../'
+                    FieldToMatch:
+                      UriPath: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: URL_DECODE
+                    PositionalConstraint: CONTAINS
+                - ByteMatchStatement:
+                    SearchString: '/etc/passwd'
+                    FieldToMatch:
+                      UriPath: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${ApplicationName}${Environment}WebACL'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-waf'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Compliance
+          Value: !Join [',', !Ref ComplianceFrameworks]
+        - Key: ManagedBy
+          Value: 'CloudFormation'
+
+  # ============================================================================
+  # WAF LOGGING CONFIGURATION
+  # ============================================================================
+
+  WAFLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/wafv2/${ApplicationName}-${Environment}'
+      RetentionInDays: !If
+        - IsProduction
+        - 365
+        - 30
+      KmsKeyId: !Ref WAFLogEncryptionKey
+
+  WAFLogEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for ${ApplicationName} WAF log encryption'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow CloudWatch Logs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:DescribeKey'
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-waf-logs-key'
+        - Key: Environment
+          Value: !Ref Environment
+
+  WAFLogEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ApplicationName}-${Environment}-waf-logs'
+      TargetKeyId: !Ref WAFLogEncryptionKey
+
+  WAFLoggingConfiguration:
+    Type: AWS::WAFv2::LoggingConfiguration
+    Properties:
+      ResourceArn: !GetAtt WebACL.Arn
+      LogDestinationConfigs:
+        - !GetAtt WAFLogGroup.Arn
+      RedactedFields:
+        - SingleHeader:
+            Name: authorization
+        - SingleHeader:
+            Name: cookie
+        - SingleHeader:
+            Name: x-api-key
+
+  # ============================================================================
+  # CLOUDFRONT DISTRIBUTION
+  # ============================================================================
+
+  CloudFrontAccessLogsBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateLoggingBucket
+    Properties:
+      BucketName: !Sub '${ApplicationName}-${Environment}-cloudfront-logs-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: !If
+              - IsProduction
+              - 365
+              - 90
+      NotificationConfiguration:
+        CloudWatchConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            CloudWatchConfiguration:
+              LogGroupName: !Ref CloudFrontLogGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-cloudfront-logs'
+        - Key: Environment
+          Value: !Ref Environment
+
+  CloudFrontOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ApplicationName}-${Environment}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'Secure CloudFront distribution for ${ApplicationName} - ${Environment}'
+        DefaultRootObject: index.html
+
+        Origins:
+          - Id: !Sub '${ApplicationName}-origin'
+            DomainName: !Ref OriginDomainName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+            OriginShield:
+              Enabled: !If [IsProduction, true, false]
+              OriginShieldRegion: !If [IsProduction, !Ref 'AWS::Region', !Ref 'AWS::NoValue']
+
+        DefaultCacheBehavior:
+          TargetOriginId: !Sub '${ApplicationName}-origin'
+          ViewerProtocolPolicy: !Ref ViewerProtocolPolicy
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachePolicyId: '4135ea2d-6df8-44a3-9df3-4b5a84be39ad'  # CachingDisabled
+          OriginRequestPolicyId: '88a5eaf4-2fd4-4709-b370-b4c650ea3fcf'  # CORS-S3Origin
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+          Compress: true
+
+        WebACLId: !If
+          - IsCloudFrontWAF
+          - !GetAtt WebACL.Arn
+          - !Ref AWS::NoValue
+
+        Logging: !If
+          - EnableCloudFrontLogging
+          - Bucket: !If
+              - CreateLoggingBucket
+              - !GetAtt CloudFrontAccessLogsBucket.DomainName
+              - !Sub '${LoggingBucket}.s3.amazonaws.com'
+            Prefix: !Sub '${ApplicationName}/${Environment}/'
+            IncludeCookies: false
+          - !Ref AWS::NoValue
+
+        Restrictions: !If
+          - EnableGeoRestriction
+          - GeoRestriction:
+              RestrictionType: whitelist
+              Locations: !Ref AllowedCountries
+          - !Ref AWS::NoValue
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2021
+
+        PriceClass: !If
+          - IsProduction
+          - PriceClass_All
+          - PriceClass_100
+
+        HttpVersion: http2and3
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-distribution'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${ApplicationName}-${Environment}-security-headers'
+        Comment: 'Security headers for enterprise application'
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+        CustomHeadersConfig:
+          Items:
+            - Header: X-Content-Security-Policy
+              Value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+              Override: true
+            - Header: X-Permitted-Cross-Domain-Policies
+              Value: none
+              Override: true
+
+  # ============================================================================
+  # MONITORING AND ALERTING
+  # ============================================================================
+
+  CloudFrontLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/cloudfront/${ApplicationName}-${Environment}'
+      RetentionInDays: !If
+        - IsProduction
+        - 90
+        - 30
+
+  WAFBlockedRequestsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApplicationName}-${Environment}-waf-blocked-requests'
+      AlarmDescription: 'High number of blocked requests detected'
+      MetricName: BlockedRequests
+      Namespace: AWS/WAFV2
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: WebACL
+          Value: !Sub '${ApplicationName}-${Environment}-waf'
+        - Name: Region
+          Value: !Ref 'AWS::Region'
+        - Name: Rule
+          Value: ALL
+      AlarmActions:
+        - !Ref SecurityNotificationTopic
+
+  RateLimitAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApplicationName}-${Environment}-rate-limit-triggered'
+      AlarmDescription: 'Rate limiting has been triggered'
+      MetricName: RateLimitRuleMetric
+      Namespace: AWS/WAFV2
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: WebACL
+          Value: !Sub '${ApplicationName}-${Environment}-waf'
+        - Name: Region
+          Value: !Ref 'AWS::Region'
+      AlarmActions:
+        - !Ref SecurityNotificationTopic
+
+  SecurityNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ApplicationName}-${Environment}-security-alerts'
+      DisplayName: !Sub '${ApplicationName} Security Alerts'
+      KmsMasterKeyId: alias/aws/sns
+
+  # ============================================================================
+  # SECURITY DASHBOARD
+  # ============================================================================
+
+  SecurityDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ApplicationName}-${Environment}-security-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/WAFV2", "AllowedRequests", "WebACL", "${ApplicationName}-${Environment}-waf", "Region", "${AWS::Region}", "Rule", "ALL" ],
+                  [ ".", "BlockedRequests", ".", ".", ".", ".", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "WAF Request Status",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/CloudFront", "Requests", "DistributionId", "${CloudFrontDistribution}" ],
+                  [ ".", "BytesDownloaded", ".", "." ],
+                  [ ".", "BytesUploaded", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "CloudFront Traffic",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+Outputs:
+  WebACLArn:
+    Description: 'ARN of the WAF Web ACL'
+    Value: !GetAtt WebACL.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-WebACL-Arn'
+
+  WebACLId:
+    Description: 'ID of the WAF Web ACL'
+    Value: !Ref WebACL
+    Export:
+      Name: !Sub '${AWS::StackName}-WebACL-Id'
+
+  CloudFrontDistributionId:
+    Description: 'CloudFront Distribution ID'
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFront-DistributionId'
+
+  CloudFrontDomainName:
+    Description: 'CloudFront Distribution Domain Name'
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFront-DomainName'
+
+  SecurityNotificationTopicArn:
+    Description: 'ARN of the security notification topic'
+    Value: !Ref SecurityNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityNotificationTopic-Arn'
+
+  WAFLogGroupName:
+    Description: 'Name of the WAF CloudWatch Log Group'
+    Value: !Ref WAFLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-WAFLogGroup-Name'
+
+  SecurityDashboardURL:
+    Description: 'URL of the security monitoring dashboard'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ApplicationName}-${Environment}-security-dashboard'
+
+  ComplianceFrameworks:
+    Description: 'Applied compliance frameworks'
+    Value: !Join [', ', !Ref ComplianceFrameworks]
+
+  SecurityConfiguration:
+    Description: 'Security configuration summary'
+    Value: !Sub |
+      WAF Scope: ${WAFScope}
+      Rate Limiting: ${RateLimitThreshold} requests/5min
+      Bot Protection: ${EnableBotProtection}
+      Geographic Blocking: ${EnableGeoBlocking}
+      Logging Level: ${LoggingLevel}

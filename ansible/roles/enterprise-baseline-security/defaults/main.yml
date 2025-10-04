@@ -1,0 +1,437 @@
+---
+# Enterprise Baseline Security Role Default Variables
+
+# =============================================================================
+# COMPLIANCE FRAMEWORK CONFIGURATION
+# =============================================================================
+
+# Compliance frameworks to apply (affects security control selection)
+baseline_security_compliance_frameworks:
+  - "CIS"
+  # - "SOC2"
+  # - "PCI-DSS"
+  # - "HIPAA"
+  # - "NIST"
+
+# Compliance level (low, medium, high, critical)
+baseline_security_compliance_level: "medium"
+
+# Environment type (affects security strictness)
+baseline_security_environment: "production"  # development, staging, production
+
+# =============================================================================
+# SYSTEM HARDENING CONFIGURATION
+# =============================================================================
+
+# Operating system hardening
+baseline_security_os_hardening:
+  disable_unused_services: true
+  remove_unnecessary_packages: true
+  configure_kernel_parameters: true
+  disable_unused_filesystems: true
+  configure_system_limits: true
+
+# User and access management
+baseline_security_user_management:
+  enforce_password_policy: true
+  configure_sudo_timeout: true
+  disable_root_login: true
+  configure_login_attempts: true
+  setup_account_lockout: true
+
+# SSH hardening
+baseline_security_ssh_hardening:
+  disable_root_ssh: true
+  disable_password_auth: false  # Set to true if using key-only auth
+  change_default_port: false    # Set to true to use custom port
+  custom_ssh_port: 2222
+  allowed_users: []             # List of users allowed SSH access
+  allowed_groups: ["ssh-users"] # List of groups allowed SSH access
+  max_auth_tries: 3
+  client_alive_interval: 300
+  client_alive_count_max: 2
+  use_dns: false
+  permit_empty_passwords: false
+  password_authentication: true  # Change based on key strategy
+  pubkey_authentication: true
+  challenge_response_authentication: false
+  kerberos_authentication: false
+  gssapi_authentication: false
+  x11_forwarding: false
+  tcp_forwarding: false
+  agent_forwarding: false
+  gateway_ports: false
+
+# Network security
+baseline_security_network_hardening:
+  configure_firewall: true
+  disable_ipv6: false
+  configure_tcp_wrappers: true
+  disable_icmp_redirects: true
+  disable_source_routing: true
+  enable_syn_cookies: true
+  disable_ip_forwarding: true
+
+# Audit and logging
+baseline_security_audit_logging:
+  configure_auditd: true
+  configure_rsyslog: true
+  setup_log_rotation: true
+  enable_process_accounting: true
+  configure_journald: true
+  setup_remote_logging: false   # Configure if centralized logging required
+  remote_log_server: ""
+  remote_log_port: 514
+
+# File system security
+baseline_security_filesystem:
+  configure_tmp_permissions: true
+  setup_separate_partitions: false  # Enable if separate partitions desired
+  configure_mount_options: true
+  setup_file_integrity_monitoring: true
+  configure_sticky_bit: true
+
+# =============================================================================
+# PACKAGE MANAGEMENT
+# =============================================================================
+
+# Packages to install for security
+baseline_security_packages_install:
+  - "aide"           # File integrity monitoring
+  - "auditd"         # Audit daemon
+  - "fail2ban"       # Intrusion prevention
+  - "rkhunter"       # Rootkit hunter
+  - "chkrootkit"     # Rootkit checker
+  - "lynis"          # Security auditing tool
+  - "unattended-upgrades"  # Automatic security updates (Ubuntu/Debian)
+  - "yum-cron"       # Automatic updates (RedHat/CentOS)
+  - "logwatch"       # Log analysis
+  - "psacct"         # Process accounting
+  - "ntp"            # Time synchronization
+  - "rsyslog"        # System logging
+  - "clamav"         # Antivirus (optional)
+
+# Packages to remove for security
+baseline_security_packages_remove:
+  - "telnet"
+  - "rsh"
+  - "rcp"
+  - "rlogin"
+  - "ypbind"
+  - "ypserv"
+  - "tftp"
+  - "tftp-server"
+  - "talk"
+  - "talk-server"
+  - "xinetd"
+  - "chargen-dgram"
+  - "chargen-stream"
+  - "daytime-dgram"
+  - "daytime-stream"
+  - "echo-dgram"
+  - "echo-stream"
+  - "tcpmux-server"
+
+# Services to disable
+baseline_security_services_disable:
+  - "chargen"
+  - "daytime"
+  - "discard"
+  - "echo"
+  - "time"
+  - "rexec"
+  - "rlogin"
+  - "rsh"
+  - "telnet"
+  - "tftp"
+  - "rsync"
+  - "xinetd"
+
+# Services to enable
+baseline_security_services_enable:
+  - "auditd"
+  - "rsyslog"
+  - "cron"
+  - "ntp"
+  - "fail2ban"
+
+# =============================================================================
+# PASSWORD POLICY
+# =============================================================================
+
+baseline_security_password_policy:
+  min_length: 14
+  max_age: 90
+  min_age: 7
+  warning_age: 14
+  remember_passwords: 12
+  require_uppercase: true
+  require_lowercase: true
+  require_numbers: true
+  require_special_chars: true
+  min_special_chars: 1
+  max_repeating_chars: 2
+  max_consecutive_chars: 3
+  complexity_check: true
+  dictionary_check: true
+  enforce_for_root: true
+
+# =============================================================================
+# AUDIT CONFIGURATION
+# =============================================================================
+
+baseline_security_auditd_config:
+  max_log_file: 50          # MB
+  num_logs: 10
+  max_log_file_action: "rotate"
+  space_left: 100           # MB
+  space_left_action: "email"
+  admin_space_left: 50      # MB
+  admin_space_left_action: "halt"
+  disk_full_action: "halt"
+  disk_error_action: "halt"
+  flush: "incremental_async"
+  freq: 50
+  log_format: "enriched"
+
+# Audit rules - what to monitor
+baseline_security_audit_rules:
+  - "-a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change"
+  - "-a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change"
+  - "-a always,exit -F arch=b64 -S clock_settime -k time-change"
+  - "-a always,exit -F arch=b32 -S clock_settime -k time-change"
+  - "-w /etc/localtime -p wa -k time-change"
+  - "-w /etc/group -p wa -k identity"
+  - "-w /etc/passwd -p wa -k identity"
+  - "-w /etc/gshadow -p wa -k identity"
+  - "-w /etc/shadow -p wa -k identity"
+  - "-w /etc/security/opasswd -p wa -k identity"
+  - "-a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale"
+  - "-a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale"
+  - "-w /etc/issue -p wa -k system-locale"
+  - "-w /etc/issue.net -p wa -k system-locale"
+  - "-w /etc/hosts -p wa -k system-locale"
+  - "-w /etc/network -p wa -k system-locale"
+  - "-w /var/log/faillog -p wa -k logins"
+  - "-w /var/log/lastlog -p wa -k logins"
+  - "-w /var/log/tallylog -p wa -k logins"
+  - "-w /var/run/utmp -p wa -k session"
+  - "-w /var/log/wtmp -p wa -k logins"
+  - "-w /var/log/btmp -p wa -k logins"
+  - "-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+  - "-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+  - "-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+  - "-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod"
+
+# =============================================================================
+# KERNEL PARAMETERS
+# =============================================================================
+
+baseline_security_kernel_parameters:
+  # Network security
+  "net.ipv4.ip_forward": 0
+  "net.ipv4.conf.all.send_redirects": 0
+  "net.ipv4.conf.default.send_redirects": 0
+  "net.ipv4.conf.all.accept_source_route": 0
+  "net.ipv4.conf.default.accept_source_route": 0
+  "net.ipv4.conf.all.accept_redirects": 0
+  "net.ipv4.conf.default.accept_redirects": 0
+  "net.ipv4.conf.all.secure_redirects": 0
+  "net.ipv4.conf.default.secure_redirects": 0
+  "net.ipv4.conf.all.log_martians": 1
+  "net.ipv4.conf.default.log_martians": 1
+  "net.ipv4.icmp_echo_ignore_broadcasts": 1
+  "net.ipv4.icmp_ignore_bogus_error_responses": 1
+  "net.ipv4.conf.all.rp_filter": 1
+  "net.ipv4.conf.default.rp_filter": 1
+  "net.ipv4.tcp_syncookies": 1
+
+  # IPv6 security (if IPv6 is enabled)
+  "net.ipv6.conf.all.accept_ra": 0
+  "net.ipv6.conf.default.accept_ra": 0
+  "net.ipv6.conf.all.accept_redirects": 0
+  "net.ipv6.conf.default.accept_redirects": 0
+
+  # System security
+  "kernel.randomize_va_space": 2
+  "kernel.exec-shield": 1
+  "kernel.dmesg_restrict": 1
+  "kernel.kptr_restrict": 2
+  "kernel.yama.ptrace_scope": 1
+  "fs.suid_dumpable": 0
+  "fs.protected_hardlinks": 1
+  "fs.protected_symlinks": 1
+
+# =============================================================================
+# FIREWALL CONFIGURATION
+# =============================================================================
+
+baseline_security_firewall:
+  enable: true
+  default_policy: "DROP"
+  allowed_tcp_ports:
+    - 22    # SSH
+    - 80    # HTTP
+    - 443   # HTTPS
+  allowed_udp_ports:
+    - 123   # NTP
+    - 53    # DNS
+  allowed_networks:
+    - "10.0.0.0/8"      # Private network
+    - "172.16.0.0/12"   # Private network
+    - "192.168.0.0/16"  # Private network
+  log_dropped_packets: true
+
+# =============================================================================
+# FILE INTEGRITY MONITORING
+# =============================================================================
+
+baseline_security_aide_config:
+  database_path: "/var/lib/aide/aide.db"
+  database_out_path: "/var/lib/aide/aide.db.new"
+  gzip_dbout: true
+  verbose: 5
+  report_url: "file:/var/log/aide/aide.log"
+
+  # Files and directories to monitor
+  monitor_paths:
+    - "/bin"
+    - "/sbin"
+    - "/lib"
+    - "/lib64"
+    - "/usr/bin"
+    - "/usr/sbin"
+    - "/usr/lib"
+    - "/usr/lib64"
+    - "/etc"
+    - "/boot"
+    - "/root"
+
+# =============================================================================
+# FAIL2BAN CONFIGURATION
+# =============================================================================
+
+baseline_security_fail2ban:
+  bantime: 3600        # 1 hour
+  findtime: 600        # 10 minutes
+  maxretry: 3
+  backend: "systemd"
+
+  jails:
+    sshd:
+      enabled: true
+      port: "ssh"
+      logpath: "/var/log/auth.log"
+      maxretry: 3
+
+    apache-auth:
+      enabled: false
+      port: "http,https"
+      logpath: "/var/log/apache2/error.log"
+
+    nginx-http-auth:
+      enabled: false
+      port: "http,https"
+      logpath: "/var/log/nginx/error.log"
+
+# =============================================================================
+# COMPLIANCE-SPECIFIC CONFIGURATIONS
+# =============================================================================
+
+# SOC 2 specific settings
+baseline_security_soc2:
+  enhanced_logging: true
+  access_reviews: true
+  encryption_required: true
+  backup_verification: true
+
+# PCI-DSS specific settings
+baseline_security_pci_dss:
+  file_integrity_monitoring: true
+  network_segmentation: true
+  access_restrictions: true
+  log_retention_months: 12
+  quarterly_vulnerability_scans: true
+
+# HIPAA specific settings
+baseline_security_hipaa:
+  encryption_at_rest: true
+  access_controls: true
+  audit_trail_required: true
+  physical_safeguards: true
+  data_backup_required: true
+
+# NIST specific settings
+baseline_security_nist:
+  continuous_monitoring: true
+  incident_response: true
+  risk_assessment: true
+  security_awareness: true
+
+# =============================================================================
+# MONITORING AND ALERTING
+# =============================================================================
+
+baseline_security_monitoring:
+  enable_logwatch: true
+  enable_system_monitoring: true
+  alert_on_critical_events: true
+
+  # Email settings for alerts
+  notification_email: ""
+  smtp_server: ""
+  smtp_port: 587
+
+  # Syslog settings
+  central_logging: false
+  syslog_server: ""
+  syslog_port: 514
+
+# =============================================================================
+# ADVANCED SECURITY FEATURES
+# =============================================================================
+
+baseline_security_advanced:
+  enable_selinux: false         # Set to true for enhanced mandatory access controls
+  enable_apparmor: false        # Set to true for application confinement
+  enable_grsecurity: false     # Set to true for kernel hardening (if available)
+  enable_pax: false            # Set to true for memory protection
+  disable_core_dumps: true     # Disable core dumps for security
+  enable_aslr: true            # Address Space Layout Randomization
+  enable_nx_bit: true          # No-Execute bit
+
+# USB and removable media restrictions
+baseline_security_removable_media:
+  disable_usb_storage: false
+  disable_firewire: true
+  disable_thunderbolt: false
+
+# Compiler restrictions (remove development tools in production)
+baseline_security_compiler_restriction:
+  remove_compilers: false      # Set to true in production environments
+  compilers_to_remove:
+    - "gcc"
+    - "g++"
+    - "make"
+    - "cmake"
+
+# =============================================================================
+# BACKUP AND RECOVERY
+# =============================================================================
+
+baseline_security_backup:
+  backup_system_configs: true
+  backup_path: "/var/backups/security-configs"
+  backup_retention_days: 30
+
+  # Files to backup
+  backup_files:
+    - "/etc/passwd"
+    - "/etc/shadow"
+    - "/etc/group"
+    - "/etc/sudoers"
+    - "/etc/ssh/sshd_config"
+    - "/etc/pam.d/"
+    - "/etc/security/"
+    - "/etc/audit/auditd.conf"
+    - "/etc/aide/aide.conf"

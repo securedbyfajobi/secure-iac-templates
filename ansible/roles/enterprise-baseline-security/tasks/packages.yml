@@ -1,0 +1,248 @@
+---
+# Package Management Tasks for Security Baseline
+
+- name: Update package cache (Debian/Ubuntu)
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+
+- name: Update package cache (RedHat/CentOS)
+  yum:
+    update_cache: yes
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int < 8
+
+- name: Update package cache (RHEL 8+/CentOS 8+)
+  dnf:
+    update_cache: yes
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 8
+
+- name: Remove insecure packages
+  package:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ baseline_security_packages_remove }}"
+  ignore_errors: yes
+  register: removed_packages
+
+- name: Log removed packages
+  debug:
+    msg: "Removed insecure package: {{ item.item }}"
+  loop: "{{ removed_packages.results }}"
+  when: item.changed
+
+- name: Install security packages (Debian/Ubuntu)
+  apt:
+    name: "{{ baseline_security_packages_install }}"
+    state: present
+    install_recommends: no
+  when: ansible_os_family == "Debian"
+  register: installed_packages_debian
+
+- name: Install security packages (RedHat/CentOS 7)
+  yum:
+    name: "{{ baseline_security_packages_install }}"
+    state: present
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int < 8
+  register: installed_packages_rhel7
+
+- name: Install security packages (RHEL 8+/CentOS 8+)
+  dnf:
+    name: "{{ baseline_security_packages_install }}"
+    state: present
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 8
+  register: installed_packages_rhel8
+
+- name: Configure automatic security updates (Debian/Ubuntu)
+  block:
+    - name: Install unattended-upgrades
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Configure unattended-upgrades
+      template:
+        src: 50unattended-upgrades.j2
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart unattended-upgrades
+
+    - name: Enable automatic updates
+      lineinfile:
+        path: /etc/apt/apt.conf.d/20auto-upgrades
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+        line: "{{ item }}"
+      loop:
+        - 'APT::Periodic::Update-Package-Lists "1";'
+        - 'APT::Periodic::Unattended-Upgrade "1";'
+        - 'APT::Periodic::AutocleanInterval "7";'
+
+  when: ansible_os_family == "Debian"
+
+- name: Configure automatic security updates (RedHat/CentOS)
+  block:
+    - name: Install yum-cron (RHEL 7)
+      yum:
+        name: yum-cron
+        state: present
+      when: ansible_distribution_major_version|int < 8
+
+    - name: Install dnf-automatic (RHEL 8+)
+      dnf:
+        name: dnf-automatic
+        state: present
+      when: ansible_distribution_major_version|int >= 8
+
+    - name: Configure yum-cron (RHEL 7)
+      template:
+        src: yum-cron.conf.j2
+        dest: /etc/yum/yum-cron.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_distribution_major_version|int < 8
+      notify: restart yum-cron
+
+    - name: Configure dnf-automatic (RHEL 8+)
+      template:
+        src: automatic.conf.j2
+        dest: /etc/dnf/automatic.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_distribution_major_version|int >= 8
+      notify: restart dnf-automatic
+
+    - name: Enable automatic updates service (RHEL 7)
+      systemd:
+        name: yum-cron
+        enabled: yes
+        state: started
+      when: ansible_distribution_major_version|int < 8
+
+    - name: Enable automatic updates service (RHEL 8+)
+      systemd:
+        name: dnf-automatic.timer
+        enabled: yes
+        state: started
+      when: ansible_distribution_major_version|int >= 8
+
+  when: ansible_os_family == "RedHat"
+
+- name: Install additional security tools based on compliance level
+  package:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ additional_security_packages[baseline_security_compliance_level] | default([]) }}"
+  vars:
+    additional_security_packages:
+      low: []
+      medium:
+        - "tripwire"
+      high:
+        - "tripwire"
+        - "samhain"
+        - "ossec-hids"
+      critical:
+        - "tripwire"
+        - "samhain"
+        - "ossec-hids"
+        - "tiger"
+        - "unhide"
+  ignore_errors: yes
+
+- name: Remove development tools in production
+  package:
+    name: "{{ baseline_security_compiler_restriction.compilers_to_remove }}"
+    state: absent
+  when:
+    - baseline_security_environment == "production"
+    - baseline_security_compiler_restriction.remove_compilers | default(false)
+  ignore_errors: yes
+
+- name: Install ClamAV antivirus if required
+  block:
+    - name: Install ClamAV
+      package:
+        name:
+          - clamav
+          - clamav-daemon
+          - clamav-freshclam
+        state: present
+
+    - name: Update ClamAV signatures
+      command: freshclam
+      ignore_errors: yes
+
+    - name: Configure ClamAV daemon
+      template:
+        src: clamd.conf.j2
+        dest: /etc/clamav/clamd.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart clamav-daemon
+
+    - name: Enable ClamAV services
+      systemd:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+      loop:
+        - clamav-freshclam
+        - clamav-daemon
+
+  when: "'clamav' in baseline_security_packages_install"
+
+- name: Configure package manager security settings
+  block:
+    - name: Configure GPG verification (Debian/Ubuntu)
+      lineinfile:
+        path: /etc/apt/apt.conf.d/99security
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+        line: "{{ item }}"
+      loop:
+        - 'APT::Get::AllowUnauthenticated "false";'
+        - 'APT::Install-Recommends "false";'
+        - 'APT::Install-Suggests "false";'
+      when: ansible_os_family == "Debian"
+
+    - name: Configure GPG verification (RedHat/CentOS)
+      lineinfile:
+        path: /etc/yum.conf
+        regexp: "^gpgcheck="
+        line: "gpgcheck=1"
+      when: ansible_os_family == "RedHat"
+
+- name: Log installed security packages
+  lineinfile:
+    path: /var/log/security-baseline/package-install.log
+    create: yes
+    owner: root
+    group: root
+    mode: '0640'
+    line: "{{ ansible_date_time.iso8601 }} - Installed security packages: {{ baseline_security_packages_install | join(', ') }}"
+
+- name: Create package verification script
+  template:
+    src: verify-packages.sh.j2
+    dest: /usr/local/bin/verify-packages.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Schedule regular package verification
+  cron:
+    name: "Verify package integrity"
+    minute: "0"
+    hour: "2"
+    job: "/usr/local/bin/verify-packages.sh >> /var/log/security-baseline/package-verification.log 2>&1"
+    user: root

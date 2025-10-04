@@ -1,0 +1,46 @@
+---
+# Container Security Role Metadata
+
+galaxy_info:
+  role_name: container-security
+  author: Security Engineering Team
+  description: Enterprise-grade container and Kubernetes security hardening
+  company: Enterprise Security
+  license: MIT
+  min_ansible_version: 2.12
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - 18.04
+        - 20.04
+        - 22.04
+    - name: CentOS
+      versions:
+        - 7
+        - 8
+        - 9
+    - name: RedHat
+      versions:
+        - 7
+        - 8
+        - 9
+    - name: Amazon
+      versions:
+        - 2
+        - 2023
+
+  galaxy_tags:
+    - security
+    - containers
+    - docker
+    - kubernetes
+    - cis
+    - compliance
+    - hardening
+    - runtime
+    - orchestration
+
+dependencies:
+  - role: enterprise-baseline-security
+    when: container_security_apply_baseline | default(true)

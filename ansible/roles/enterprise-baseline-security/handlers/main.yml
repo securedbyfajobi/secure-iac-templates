@@ -1,0 +1,94 @@
+---
+# Handlers for Enterprise Baseline Security Role
+
+- name: restart ssh
+  systemd:
+    name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    state: restarted
+  listen: restart ssh
+
+- name: restart auditd
+  systemd:
+    name: auditd
+    state: restarted
+  listen: restart auditd
+
+- name: restart rsyslog
+  systemd:
+    name: rsyslog
+    state: restarted
+  listen: restart rsyslog
+
+- name: restart systemd-journald
+  systemd:
+    name: systemd-journald
+    state: restarted
+  listen: restart systemd-journald
+
+- name: restart fail2ban
+  systemd:
+    name: fail2ban
+    state: restarted
+  listen: restart fail2ban
+
+- name: restart firewall
+  systemd:
+    name: "{{ 'ufw' if ansible_os_family == 'Debian' else 'firewalld' }}"
+    state: restarted
+  listen: restart firewall
+
+- name: restart ntp
+  systemd:
+    name: "{{ 'ntp' if ansible_os_family == 'Debian' else 'ntpd' }}"
+    state: restarted
+  listen: restart ntp
+
+- name: restart unattended-upgrades
+  systemd:
+    name: unattended-upgrades
+    state: restarted
+  listen: restart unattended-upgrades
+  when: ansible_os_family == "Debian"
+
+- name: restart yum-cron
+  systemd:
+    name: yum-cron
+    state: restarted
+  listen: restart yum-cron
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int < 8
+
+- name: restart dnf-automatic
+  systemd:
+    name: dnf-automatic.timer
+    state: restarted
+  listen: restart dnf-automatic
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 8
+
+- name: restart clamav-daemon
+  systemd:
+    name: clamav-daemon
+    state: restarted
+  listen: restart clamav-daemon
+
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+  listen: reload systemd
+
+- name: apply sysctl
+  command: sysctl -p
+  listen: apply sysctl
+
+- name: restart networking
+  systemd:
+    name: networking
+    state: restarted
+  listen: restart networking
+  when: ansible_os_family == "Debian"
+
+- name: restart network
+  systemd:
+    name: network
+    state: restarted
+  listen: restart network
+  when: ansible_os_family == "RedHat"

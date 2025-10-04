@@ -1,0 +1,179 @@
+---
+# Enterprise Baseline Security Role Main Tasks
+
+- name: Display security baseline configuration
+  debug:
+    msg:
+      - "Applying enterprise security baseline"
+      - "Compliance Level: {{ baseline_security_compliance_level }}"
+      - "Environment: {{ baseline_security_environment }}"
+      - "Frameworks: {{ baseline_security_compliance_frameworks | join(', ') }}"
+
+- name: Gather system facts
+  setup:
+    gather_subset:
+      - "all"
+
+- name: Validate supported operating system
+  assert:
+    that:
+      - ansible_os_family in ['RedHat', 'Debian']
+    fail_msg: "This role only supports RedHat and Debian family operating systems"
+    success_msg: "Operating system {{ ansible_distribution }} {{ ansible_distribution_version }} is supported"
+
+- name: Create security baseline directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - /var/log/security-baseline
+    - /etc/security-baseline
+    - "{{ baseline_security_backup.backup_path }}"
+
+# =============================================================================
+# PRE-HARDENING TASKS
+# =============================================================================
+
+- name: Create pre-hardening backup
+  include_tasks: backup.yml
+  when: baseline_security_backup.backup_system_configs | default(true)
+
+- name: Perform system assessment
+  include_tasks: assessment.yml
+
+# =============================================================================
+# PACKAGE MANAGEMENT
+# =============================================================================
+
+- name: Manage security packages
+  include_tasks: packages.yml
+
+# =============================================================================
+# USER AND ACCESS MANAGEMENT
+# =============================================================================
+
+- name: Configure user management and access controls
+  include_tasks: users.yml
+  when: baseline_security_user_management.enforce_password_policy | default(true)
+
+# =============================================================================
+# SSH HARDENING
+# =============================================================================
+
+- name: Harden SSH configuration
+  include_tasks: ssh.yml
+  when: baseline_security_ssh_hardening.disable_root_ssh | default(true)
+
+# =============================================================================
+# NETWORK SECURITY
+# =============================================================================
+
+- name: Configure network security
+  include_tasks: network.yml
+  when: baseline_security_network_hardening.configure_firewall | default(true)
+
+# =============================================================================
+# KERNEL HARDENING
+# =============================================================================
+
+- name: Apply kernel security parameters
+  include_tasks: kernel.yml
+  when: baseline_security_os_hardening.configure_kernel_parameters | default(true)
+
+# =============================================================================
+# AUDIT AND LOGGING
+# =============================================================================
+
+- name: Configure audit and logging
+  include_tasks: audit.yml
+  when: baseline_security_audit_logging.configure_auditd | default(true)
+
+# =============================================================================
+# FILE SYSTEM SECURITY
+# =============================================================================
+
+- name: Configure filesystem security
+  include_tasks: filesystem.yml
+  when: baseline_security_filesystem.configure_tmp_permissions | default(true)
+
+# =============================================================================
+# FILE INTEGRITY MONITORING
+# =============================================================================
+
+- name: Setup file integrity monitoring
+  include_tasks: aide.yml
+  when: baseline_security_filesystem.setup_file_integrity_monitoring | default(true)
+
+# =============================================================================
+# INTRUSION PREVENTION
+# =============================================================================
+
+- name: Configure intrusion prevention
+  include_tasks: fail2ban.yml
+  when: "'fail2ban' in baseline_security_packages_install"
+
+# =============================================================================
+# SERVICES HARDENING
+# =============================================================================
+
+- name: Harden system services
+  include_tasks: services.yml
+  when: baseline_security_os_hardening.disable_unused_services | default(true)
+
+# =============================================================================
+# COMPLIANCE-SPECIFIC CONFIGURATIONS
+# =============================================================================
+
+- name: Apply SOC 2 compliance controls
+  include_tasks: compliance/soc2.yml
+  when: "'SOC2' in baseline_security_compliance_frameworks"
+
+- name: Apply PCI-DSS compliance controls
+  include_tasks: compliance/pci-dss.yml
+  when: "'PCI-DSS' in baseline_security_compliance_frameworks"
+
+- name: Apply HIPAA compliance controls
+  include_tasks: compliance/hipaa.yml
+  when: "'HIPAA' in baseline_security_compliance_frameworks"
+
+- name: Apply NIST compliance controls
+  include_tasks: compliance/nist.yml
+  when: "'NIST' in baseline_security_compliance_frameworks"
+
+# =============================================================================
+# ADVANCED SECURITY FEATURES
+# =============================================================================
+
+- name: Configure advanced security features
+  include_tasks: advanced.yml
+  when: baseline_security_advanced.enable_aslr | default(true)
+
+# =============================================================================
+# MONITORING AND ALERTING
+# =============================================================================
+
+- name: Setup monitoring and alerting
+  include_tasks: monitoring.yml
+  when: baseline_security_monitoring.enable_logwatch | default(true)
+
+# =============================================================================
+# POST-HARDENING TASKS
+# =============================================================================
+
+- name: Perform post-hardening validation
+  include_tasks: validation.yml
+
+- name: Generate security report
+  include_tasks: reporting.yml
+
+- name: Final security summary
+  debug:
+    msg:
+      - "Security baseline configuration completed successfully"
+      - "System hardening level: {{ baseline_security_compliance_level }}"
+      - "Compliance frameworks applied: {{ baseline_security_compliance_frameworks | join(', ') }}"
+      - "Review the security report at /var/log/security-baseline/security-report.json"
+      - "Next steps: Run security validation tools (lynis, aide, etc.)"

@@ -1,0 +1,214 @@
+---
+# SSH Hardening Tasks
+
+- name: Backup original SSH configuration
+  copy:
+    src: /etc/ssh/sshd_config
+    dest: /etc/ssh/sshd_config.backup.{{ ansible_date_time.epoch }}
+    remote_src: yes
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Generate SSH host keys if missing
+  command: ssh-keygen -A
+  args:
+    creates: /etc/ssh/ssh_host_rsa_key
+
+- name: Set proper permissions on SSH host keys
+  file:
+    path: "{{ item.path }}"
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/etc/ssh/ssh_host_rsa_key", group: "root", mode: "0600" }
+    - { path: "/etc/ssh/ssh_host_rsa_key.pub", group: "root", mode: "0644" }
+    - { path: "/etc/ssh/ssh_host_ecdsa_key", group: "root", mode: "0600" }
+    - { path: "/etc/ssh/ssh_host_ecdsa_key.pub", group: "root", mode: "0644" }
+    - { path: "/etc/ssh/ssh_host_ed25519_key", group: "root", mode: "0600" }
+    - { path: "/etc/ssh/ssh_host_ed25519_key.pub", group: "root", mode: "0644" }
+  ignore_errors: yes
+
+- name: Configure SSH daemon
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?{{ item.key }}"
+    line: "{{ item.key }} {{ item.value }}"
+    backup: yes
+  loop:
+    - { key: "Protocol", value: "2" }
+    - { key: "Port", value: "{{ baseline_security_ssh_hardening.custom_ssh_port if baseline_security_ssh_hardening.change_default_port else '22' }}" }
+    - { key: "PermitRootLogin", value: "{{ 'no' if baseline_security_ssh_hardening.disable_root_ssh else 'yes' }}" }
+    - { key: "PasswordAuthentication", value: "{{ 'yes' if baseline_security_ssh_hardening.password_authentication else 'no' }}" }
+    - { key: "PubkeyAuthentication", value: "{{ 'yes' if baseline_security_ssh_hardening.pubkey_authentication else 'no' }}" }
+    - { key: "PermitEmptyPasswords", value: "{{ 'yes' if baseline_security_ssh_hardening.permit_empty_passwords else 'no' }}" }
+    - { key: "ChallengeResponseAuthentication", value: "{{ 'yes' if baseline_security_ssh_hardening.challenge_response_authentication else 'no' }}" }
+    - { key: "KerberosAuthentication", value: "{{ 'yes' if baseline_security_ssh_hardening.kerberos_authentication else 'no' }}" }
+    - { key: "GSSAPIAuthentication", value: "{{ 'yes' if baseline_security_ssh_hardening.gssapi_authentication else 'no' }}" }
+    - { key: "X11Forwarding", value: "{{ 'yes' if baseline_security_ssh_hardening.x11_forwarding else 'no' }}" }
+    - { key: "AllowTcpForwarding", value: "{{ 'yes' if baseline_security_ssh_hardening.tcp_forwarding else 'no' }}" }
+    - { key: "AllowAgentForwarding", value: "{{ 'yes' if baseline_security_ssh_hardening.agent_forwarding else 'no' }}" }
+    - { key: "GatewayPorts", value: "{{ 'yes' if baseline_security_ssh_hardening.gateway_ports else 'no' }}" }
+    - { key: "UseDNS", value: "{{ 'yes' if baseline_security_ssh_hardening.use_dns else 'no' }}" }
+    - { key: "MaxAuthTries", value: "{{ baseline_security_ssh_hardening.max_auth_tries }}" }
+    - { key: "ClientAliveInterval", value: "{{ baseline_security_ssh_hardening.client_alive_interval }}" }
+    - { key: "ClientAliveCountMax", value: "{{ baseline_security_ssh_hardening.client_alive_count_max }}" }
+    - { key: "LoginGraceTime", value: "60" }
+    - { key: "MaxStartups", value: "10:30:100" }
+    - { key: "MaxSessions", value: "10" }
+    - { key: "TCPKeepAlive", value: "yes" }
+    - { key: "Compression", value: "delayed" }
+    - { key: "LogLevel", value: "INFO" }
+    - { key: "SyslogFacility", value: "AUTHPRIV" }
+    - { key: "StrictModes", value: "yes" }
+    - { key: "IgnoreRhosts", value: "yes" }
+    - { key: "RhostsRSAAuthentication", value: "no" }
+    - { key: "HostbasedAuthentication", value: "no" }
+    - { key: "PermitUserEnvironment", value: "no" }
+    - { key: "AllowUsers", value: "{{ baseline_security_ssh_hardening.allowed_users | join(' ') if baseline_security_ssh_hardening.allowed_users | length > 0 else '' }}" }
+    - { key: "AllowGroups", value: "{{ baseline_security_ssh_hardening.allowed_groups | join(' ') if baseline_security_ssh_hardening.allowed_groups | length > 0 else '' }}" }
+  notify: restart ssh
+  when: item.value != ""
+
+- name: Configure SSH ciphers and MACs (modern security)
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?{{ item.key }}"
+    line: "{{ item.key }} {{ item.value }}"
+    backup: yes
+  loop:
+    - key: "Ciphers"
+      value: "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+    - key: "MACs"
+      value: "hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512"
+    - key: "KexAlgorithms"
+      value: "curve25519-sha256@libssh.org,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha256"
+    - key: "HostKeyAlgorithms"
+      value: "ssh-ed25519,ecdsa-sha2-nistp521,ecdsa-sha2-nistp384,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256"
+  notify: restart ssh
+
+- name: Remove weak SSH host keys
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/ssh/ssh_host_dsa_key
+    - /etc/ssh/ssh_host_dsa_key.pub
+  notify: restart ssh
+
+- name: Create SSH banner
+  template:
+    src: ssh_banner.j2
+    dest: /etc/ssh/banner
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure SSH banner
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?Banner"
+    line: "Banner /etc/ssh/banner"
+    backup: yes
+  notify: restart ssh
+
+- name: Create SSH group for allowed users
+  group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ baseline_security_ssh_hardening.allowed_groups }}"
+  when: baseline_security_ssh_hardening.allowed_groups | length > 0
+
+- name: Configure SSH idle timeout script
+  template:
+    src: ssh-idle-timeout.sh.j2
+    dest: /usr/local/bin/ssh-idle-timeout.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Add SSH idle timeout to profile
+  lineinfile:
+    path: /etc/profile
+    line: "TMOUT={{ baseline_security_ssh_hardening.client_alive_interval }}"
+    create: yes
+
+- name: Configure SSH key exchange timeout
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?LoginGraceTime"
+    line: "LoginGraceTime 60"
+    backup: yes
+  notify: restart ssh
+
+- name: Disable SSH protocol 1 support
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?Protocol"
+    line: "Protocol 2"
+    backup: yes
+  notify: restart ssh
+
+- name: Configure SSH logging
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?{{ item.key }}"
+    line: "{{ item.key }} {{ item.value }}"
+    backup: yes
+  loop:
+    - { key: "LogLevel", value: "VERBOSE" }
+    - { key: "SyslogFacility", value: "AUTH" }
+  notify: restart ssh
+  when: baseline_security_compliance_level in ['high', 'critical']
+
+- name: Configure fail2ban for SSH (if installed)
+  template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart fail2ban
+  when: "'fail2ban' in baseline_security_packages_install"
+
+- name: Test SSH configuration
+  command: sshd -t
+  register: sshd_test
+  failed_when: sshd_test.rc != 0
+  changed_when: false
+
+- name: Log SSH hardening completion
+  lineinfile:
+    path: /var/log/security-baseline/ssh-hardening.log
+    create: yes
+    owner: root
+    group: root
+    mode: '0640'
+    line: "{{ ansible_date_time.iso8601 }} - SSH hardening completed successfully"
+
+- name: Create SSH monitoring script
+  template:
+    src: monitor-ssh.sh.j2
+    dest: /usr/local/bin/monitor-ssh.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Schedule SSH monitoring
+  cron:
+    name: "Monitor SSH connections"
+    minute: "*/5"
+    job: "/usr/local/bin/monitor-ssh.sh >> /var/log/security-baseline/ssh-monitoring.log 2>&1"
+    user: root
+  when: baseline_security_monitoring.enable_system_monitoring | default(true)
+
+- name: Display SSH hardening summary
+  debug:
+    msg:
+      - "SSH hardening completed"
+      - "Root login: {{ 'Disabled' if baseline_security_ssh_hardening.disable_root_ssh else 'Enabled' }}"
+      - "Password auth: {{ 'Enabled' if baseline_security_ssh_hardening.password_authentication else 'Disabled' }}"
+      - "SSH port: {{ baseline_security_ssh_hardening.custom_ssh_port if baseline_security_ssh_hardening.change_default_port else '22' }}"
+      - "Max auth tries: {{ baseline_security_ssh_hardening.max_auth_tries }}"
+      - "Client alive interval: {{ baseline_security_ssh_hardening.client_alive_interval }}"

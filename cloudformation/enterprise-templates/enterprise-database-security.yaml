@@ -1,0 +1,840 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enterprise Database Security - RDS with comprehensive security controls, encryption, monitoring, and compliance features'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment Configuration"
+        Parameters:
+          - Environment
+          - ApplicationName
+          - ComplianceFrameworks
+      - Label:
+          default: "Database Configuration"
+        Parameters:
+          - DBEngine
+          - DBEngineVersion
+          - DBInstanceClass
+          - AllocatedStorage
+          - MultiAZ
+      - Label:
+          default: "Security Configuration"
+        Parameters:
+          - DBUsername
+          - BackupRetentionPeriod
+          - EnableEncryption
+          - EnablePerformanceInsights
+          - EnableEnhancedMonitoring
+      - Label:
+          default: "Network Security"
+        Parameters:
+          - VpcId
+          - PrivateSubnetIds
+          - AllowedCidrBlocks
+          - EnablePublicAccess
+      - Label:
+          default: "Compliance and Auditing"
+        Parameters:
+          - EnableAuditing
+          - LogRetentionDays
+          - EnableSlowQueryLogging
+          - EnableErrorLogging
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+    Description: 'Environment name for resource tagging and configuration'
+
+  ApplicationName:
+    Type: String
+    Default: 'enterprise-app'
+    Description: 'Name of the application using this database'
+    MinLength: 3
+    MaxLength: 64
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  ComplianceFrameworks:
+    Type: CommaDelimitedList
+    Default: 'SOC2,PCI-DSS'
+    Description: 'Comma-separated list of compliance frameworks (SOC2, PCI-DSS, HIPAA, NIST)'
+
+  DBEngine:
+    Type: String
+    Default: 'mysql'
+    AllowedValues: ['mysql', 'postgres', 'oracle-ee', 'sqlserver-ex', 'sqlserver-se', 'sqlserver-ee']
+    Description: 'Database engine type'
+
+  DBEngineVersion:
+    Type: String
+    Default: '8.0.35'
+    Description: 'Database engine version (use latest stable version)'
+
+  DBInstanceClass:
+    Type: String
+    Default: 'db.r6g.large'
+    AllowedValues:
+      - 'db.t3.micro'
+      - 'db.t3.small'
+      - 'db.t3.medium'
+      - 'db.t3.large'
+      - 'db.r6g.large'
+      - 'db.r6g.xlarge'
+      - 'db.r6g.2xlarge'
+      - 'db.r6g.4xlarge'
+      - 'db.r6g.8xlarge'
+    Description: 'Database instance class'
+
+  AllocatedStorage:
+    Type: Number
+    Default: 100
+    MinValue: 20
+    MaxValue: 65536
+    Description: 'Initial database storage size in GB'
+
+  MultiAZ:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Multi-AZ deployment for high availability'
+
+  DBUsername:
+    Type: String
+    Default: 'dbadmin'
+    Description: 'Database master username'
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9]*$'
+
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 35
+    Description: 'Database backup retention period in days'
+
+  EnableEncryption:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable database encryption at rest'
+
+  EnablePerformanceInsights:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Performance Insights for monitoring'
+
+  EnableEnhancedMonitoring:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Enhanced Monitoring'
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC ID for database deployment'
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'Private subnet IDs for database subnet group (minimum 2 in different AZs)'
+
+  AllowedCidrBlocks:
+    Type: CommaDelimitedList
+    Default: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+    Description: 'CIDR blocks allowed to access the database'
+
+  EnablePublicAccess:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable public accessibility (not recommended for production)'
+
+  EnableAuditing:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable database auditing'
+
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    MaxValue: 3653
+    Description: 'CloudWatch log retention period in days'
+
+  EnableSlowQueryLogging:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable slow query logging'
+
+  EnableErrorLogging:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable error logging'
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'production']
+  EnableDBEncryption: !Equals [!Ref EnableEncryption, 'true']
+  EnableDBPublicAccess: !Equals [!Ref EnablePublicAccess, 'true']
+  IsMultiAZ: !Equals [!Ref MultiAZ, 'true']
+  EnableDBPerformanceInsights: !Equals [!Ref EnablePerformanceInsights, 'true']
+  EnableDBEnhancedMonitoring: !Equals [!Ref EnableEnhancedMonitoring, 'true']
+  EnableDBSlowQueryLogging: !Equals [!Ref EnableSlowQueryLogging, 'true']
+  EnableDBErrorLogging: !Equals [!Ref EnableErrorLogging, 'true']
+  EnableDBCloudWatchLogs: !Or
+    - !Condition EnableDBSlowQueryLogging
+    - !Condition EnableDBErrorLogging
+  IsMySQLEngine: !Equals [!Ref DBEngine, 'mysql']
+  IsPostgreSQLEngine: !Equals [!Ref DBEngine, 'postgres']
+  IsOracleEngine: !Equals [!Ref DBEngine, 'oracle-ee']
+  IsSQLServerEngine: !Or
+    - !Equals [!Ref DBEngine, 'sqlserver-ex']
+    - !Equals [!Ref DBEngine, 'sqlserver-se']
+    - !Equals [!Ref DBEngine, 'sqlserver-ee']
+  SupportsCloudWatchLogs: !Or
+    - !Condition IsMySQLEngine
+    - !Condition IsPostgreSQLEngine
+  RequiresComplianceFeatures: !Or
+    - !Equals [!Ref Environment, 'production']
+    - !Equals [!Ref Environment, 'staging']
+
+Mappings:
+  ComplianceMapping:
+    SOC2:
+      BackupRetentionDays: 90
+      LogRetentionDays: 90
+      RequireEncryption: true
+      RequireMonitoring: true
+    PCI-DSS:
+      BackupRetentionDays: 365
+      LogRetentionDays: 365
+      RequireEncryption: true
+      RequireMonitoring: true
+    HIPAA:
+      BackupRetentionDays: 2555  # 7 years
+      LogRetentionDays: 2555
+      RequireEncryption: true
+      RequireMonitoring: true
+    NIST:
+      BackupRetentionDays: 365
+      LogRetentionDays: 365
+      RequireEncryption: true
+      RequireMonitoring: true
+
+  EngineMapping:
+    mysql:
+      Port: 3306
+      ParameterGroupFamily: 'mysql8.0'
+      CloudWatchLogs: ['error', 'general', 'slow-query']
+      DefaultParameterGroup: 'default.mysql8.0'
+    postgres:
+      Port: 5432
+      ParameterGroupFamily: 'postgres15'
+      CloudWatchLogs: ['postgresql']
+      DefaultParameterGroup: 'default.postgres15'
+    oracle-ee:
+      Port: 1521
+      ParameterGroupFamily: 'oracle-ee-19'
+      CloudWatchLogs: ['alert', 'audit', 'trace', 'listener']
+      DefaultParameterGroup: 'default.oracle-ee-19'
+
+Resources:
+  # ============================================================================
+  # ENCRYPTION KEYS
+  # ============================================================================
+
+  DatabaseEncryptionKey:
+    Type: AWS::KMS::Key
+    Condition: EnableDBEncryption
+    Properties:
+      Description: !Sub 'KMS key for ${ApplicationName} database encryption'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow RDS Service
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 'rds.${AWS::Region}.amazonaws.com'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-database-key'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+
+  DatabaseEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: EnableDBEncryption
+    Properties:
+      AliasName: !Sub 'alias/${ApplicationName}-${Environment}-database'
+      TargetKeyId: !Ref DatabaseEncryptionKey
+
+  # ============================================================================
+  # SECURITY GROUPS
+  # ============================================================================
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ApplicationName}-${Environment}-database-sg'
+      GroupDescription: !Sub 'Security group for ${ApplicationName} database'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !FindInMap [EngineMapping, !Ref DBEngine, Port]
+          ToPort: !FindInMap [EngineMapping, !Ref DBEngine, Port]
+          CidrIp: !Select [0, !Ref AllowedCidrBlocks]
+          Description: 'Database access from application subnets'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'All outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-database-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Purpose
+          Value: 'Database Security Group'
+
+  # Additional security group rules for multiple CIDR blocks
+  DatabaseSecurityGroupIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: RequiresComplianceFeatures
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: !FindInMap [EngineMapping, !Ref DBEngine, Port]
+      ToPort: !FindInMap [EngineMapping, !Ref DBEngine, Port]
+      CidrIp: !Select [1, !Ref AllowedCidrBlocks]
+      Description: 'Database access from secondary network range'
+
+  # ============================================================================
+  # DATABASE SUBNET GROUP
+  # ============================================================================
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub '${ApplicationName}-${Environment}-subnet-group'
+      DBSubnetGroupDescription: !Sub 'Subnet group for ${ApplicationName} database'
+      SubnetIds: !Ref PrivateSubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-subnet-group'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+
+  # ============================================================================
+  # DATABASE PARAMETER GROUPS
+  # ============================================================================
+
+  DatabaseParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      DBParameterGroupName: !Sub '${ApplicationName}-${Environment}-params'
+      Description: !Sub 'Custom parameter group for ${ApplicationName} ${DBEngine} database'
+      Family: !FindInMap [EngineMapping, !Ref DBEngine, ParameterGroupFamily]
+      Parameters: !If
+        - IsMySQLEngine
+        - # MySQL security parameters
+          slow_query_log: 1
+          long_query_time: 2
+          log_queries_not_using_indexes: 1
+          general_log: 1
+          innodb_file_per_table: 1
+          innodb_flush_log_at_trx_commit: 1
+          sync_binlog: 1
+          max_connections: 1000
+          connect_timeout: 60
+          wait_timeout: 28800
+          interactive_timeout: 28800
+          max_allowed_packet: 67108864
+          sql_mode: 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO'
+        - !If
+          - IsPostgreSQLEngine
+          - # PostgreSQL security parameters
+            log_statement: 'all'
+            log_duration: 1
+            log_min_duration_statement: 1000
+            log_connections: 1
+            log_disconnections: 1
+            log_lock_waits: 1
+            log_temp_files: 0
+            log_checkpoints: 1
+            shared_preload_libraries: 'pg_stat_statements'
+            track_activity_query_size: 2048
+            wal_level: 'replica'
+            max_wal_senders: 10
+          - {}  # Default for other engines
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-params'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+
+  # ============================================================================
+  # DATABASE OPTION GROUP
+  # ============================================================================
+
+  DatabaseOptionGroup:
+    Type: AWS::RDS::OptionGroup
+    Condition: IsOracleEngine
+    Properties:
+      OptionGroupName: !Sub '${ApplicationName}-${Environment}-options'
+      OptionGroupDescription: !Sub 'Option group for ${ApplicationName} Oracle database'
+      EngineName: !Ref DBEngine
+      MajorEngineVersion: !Select [0, !Split ['.', !Ref DBEngineVersion]]
+      OptionConfigurations:
+        - OptionName: 'STATSPACK'
+        - OptionName: 'Timezone'
+          OptionSettings:
+            - Name: 'TIME_ZONE'
+              Value: 'UTC'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-options'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # DATABASE SECRETS MANAGER
+  # ============================================================================
+
+  DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ApplicationName}-${Environment}-database-credentials'
+      Description: !Sub 'Database credentials for ${ApplicationName} ${Environment}'
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${DBUsername}"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+        RequireEachIncludedType: true
+      KmsKeyId: !If
+        - EnableDBEncryption
+        - !Ref DatabaseEncryptionKey
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-database-secret'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+
+  DatabaseSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DatabaseSecret
+      TargetId: !Ref DatabaseInstance
+      TargetType: AWS::RDS::DBInstance
+
+  # ============================================================================
+  # RDS DATABASE INSTANCE
+  # ============================================================================
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${ApplicationName}-${Environment}-database'
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: !Ref DBEngine
+      EngineVersion: !Ref DBEngineVersion
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: 'gp3'
+      StorageEncrypted: !Ref EnableEncryption
+      KmsKeyId: !If
+        - EnableDBEncryption
+        - !Ref DatabaseEncryptionKey
+        - !Ref AWS::NoValue
+
+      # Master credentials
+      MasterUsername: !Sub '{{resolve:secretsmanager:${DatabaseSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DatabaseSecret}:SecretString:password}}'
+
+      # Network configuration
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      PubliclyAccessible: !Ref EnablePublicAccess
+      Port: !FindInMap [EngineMapping, !Ref DBEngine, Port]
+
+      # High availability and backup
+      MultiAZ: !Ref MultiAZ
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      DeleteAutomatedBackups: false
+      DeletionProtection: !If [IsProduction, true, false]
+
+      # Parameter and option groups
+      DBParameterGroupName: !Ref DatabaseParameterGroup
+      OptionGroupName: !If
+        - IsOracleEngine
+        - !Ref DatabaseOptionGroup
+        - !Ref AWS::NoValue
+
+      # Monitoring and logging
+      MonitoringInterval: !If
+        - EnableDBEnhancedMonitoring
+        - 60
+        - 0
+      MonitoringRoleArn: !If
+        - EnableDBEnhancedMonitoring
+        - !GetAtt EnhancedMonitoringRole.Arn
+        - !Ref AWS::NoValue
+      EnablePerformanceInsights: !Ref EnablePerformanceInsights
+      PerformanceInsightsRetentionPeriod: !If
+        - EnableDBPerformanceInsights
+        - !If [IsProduction, 731, 7]  # 2 years for production, 7 days for non-prod
+        - !Ref AWS::NoValue
+      PerformanceInsightsKMSKeyId: !If
+        - EnableDBPerformanceInsights
+        - !If
+          - EnableDBEncryption
+          - !Ref DatabaseEncryptionKey
+          - !Ref AWS::NoValue
+        - !Ref AWS::NoValue
+
+      # CloudWatch Logs
+      EnableCloudwatchLogsExports: !If
+        - SupportsCloudWatchLogs
+        - !If
+          - EnableDBCloudWatchLogs
+          - !FindInMap [EngineMapping, !Ref DBEngine, CloudWatchLogs]
+          - !Ref AWS::NoValue
+        - !Ref AWS::NoValue
+
+      # Auto minor version update
+      AutoMinorVersionUpgrade: !If [IsProduction, false, true]
+
+      # Copy tags to snapshots
+      CopyTagsToSnapshot: true
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-database'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Engine
+          Value: !Ref DBEngine
+        - Key: Compliance
+          Value: !Join [',', !Ref ComplianceFrameworks]
+        - Key: BackupRetention
+          Value: !Sub '${BackupRetentionPeriod} days'
+        - Key: Encrypted
+          Value: !Ref EnableEncryption
+
+  # ============================================================================
+  # ENHANCED MONITORING ROLE
+  # ============================================================================
+
+  EnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Condition: EnableDBEnhancedMonitoring
+    Properties:
+      RoleName: !Sub '${ApplicationName}-${Environment}-rds-monitoring-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-rds-monitoring-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # CLOUDWATCH LOG GROUPS
+  # ============================================================================
+
+  DatabaseErrorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableDBErrorLogging
+    Properties:
+      LogGroupName: !Sub '/aws/rds/instance/${ApplicationName}-${Environment}-database/error'
+      RetentionInDays: !Ref LogRetentionDays
+      KmsKeyId: !If
+        - EnableDBEncryption
+        - !GetAtt DatabaseEncryptionKey.Arn
+        - !Ref AWS::NoValue
+
+  DatabaseSlowQueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableDBSlowQueryLogging
+    Properties:
+      LogGroupName: !Sub '/aws/rds/instance/${ApplicationName}-${Environment}-database/slowquery'
+      RetentionInDays: !Ref LogRetentionDays
+      KmsKeyId: !If
+        - EnableDBEncryption
+        - !GetAtt DatabaseEncryptionKey.Arn
+        - !Ref AWS::NoValue
+
+  # ============================================================================
+  # READ REPLICA (for production)
+  # ============================================================================
+
+  DatabaseReadReplica:
+    Type: AWS::RDS::DBInstance
+    Condition: IsProduction
+    Properties:
+      DBInstanceIdentifier: !Sub '${ApplicationName}-${Environment}-database-replica'
+      DBInstanceClass: !Ref DBInstanceClass
+      SourceDBInstanceIdentifier: !Ref DatabaseInstance
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      MonitoringInterval: !If
+        - EnableDBEnhancedMonitoring
+        - 60
+        - 0
+      MonitoringRoleArn: !If
+        - EnableDBEnhancedMonitoring
+        - !GetAtt EnhancedMonitoringRole.Arn
+        - !Ref AWS::NoValue
+      EnablePerformanceInsights: !Ref EnablePerformanceInsights
+      AutoMinorVersionUpgrade: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ApplicationName}-${Environment}-database-replica'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Purpose
+          Value: 'Read Replica'
+
+  # ============================================================================
+  # MONITORING AND ALERTING
+  # ============================================================================
+
+  DatabaseCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApplicationName}-${Environment}-database-cpu-high'
+      AlarmDescription: 'Database CPU utilization is too high'
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstance
+      AlarmActions:
+        - !Ref DatabaseNotificationTopic
+
+  DatabaseConnectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApplicationName}-${Environment}-database-connections-high'
+      AlarmDescription: 'Database connection count is too high'
+      MetricName: DatabaseConnections
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstance
+      AlarmActions:
+        - !Ref DatabaseNotificationTopic
+
+  DatabaseFreeableMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApplicationName}-${Environment}-database-memory-low'
+      AlarmDescription: 'Database freeable memory is low'
+      MetricName: FreeableMemory
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 268435456  # 256 MB in bytes
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstance
+      AlarmActions:
+        - !Ref DatabaseNotificationTopic
+
+  DatabaseNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ApplicationName}-${Environment}-database-alerts'
+      DisplayName: !Sub '${ApplicationName} Database Alerts'
+      KmsMasterKeyId: alias/aws/sns
+
+  # ============================================================================
+  # SECURITY COMPLIANCE DASHBOARD
+  # ============================================================================
+
+  DatabaseSecurityDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ApplicationName}-${Environment}-database-security'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${DatabaseInstance}" ],
+                  [ ".", "DatabaseConnections", ".", "." ],
+                  [ ".", "FreeableMemory", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Database Performance Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/RDS", "ReadLatency", "DBInstanceIdentifier", "${DatabaseInstance}" ],
+                  [ ".", "WriteLatency", ".", "." ],
+                  [ ".", "ReadIOPS", ".", "." ],
+                  [ ".", "WriteIOPS", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Database I/O Performance",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DatabaseInstanceIdentifier:
+    Description: 'RDS Database Instance Identifier'
+    Value: !Ref DatabaseInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseInstance-Identifier'
+
+  DatabaseEndpoint:
+    Description: 'RDS Database Endpoint'
+    Value: !GetAtt DatabaseInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseInstance-Endpoint'
+
+  DatabasePort:
+    Description: 'RDS Database Port'
+    Value: !GetAtt DatabaseInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseInstance-Port'
+
+  DatabaseSecretArn:
+    Description: 'ARN of the database credentials secret'
+    Value: !Ref DatabaseSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSecret-Arn'
+
+  DatabaseSecurityGroupId:
+    Description: 'Security Group ID for database access'
+    Value: !Ref DatabaseSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSecurityGroup-Id'
+
+  DatabaseSubnetGroupName:
+    Description: 'Database Subnet Group Name'
+    Value: !Ref DatabaseSubnetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSubnetGroup-Name'
+
+  DatabaseReadReplicaEndpoint:
+    Condition: IsProduction
+    Description: 'RDS Read Replica Endpoint'
+    Value: !GetAtt DatabaseReadReplica.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseReadReplica-Endpoint'
+
+  DatabaseEncryptionKeyId:
+    Condition: EnableDBEncryption
+    Description: 'KMS Key ID for database encryption'
+    Value: !Ref DatabaseEncryptionKey
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseEncryptionKey-Id'
+
+  DatabaseNotificationTopicArn:
+    Description: 'ARN of the database notification topic'
+    Value: !Ref DatabaseNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseNotificationTopic-Arn'
+
+  DatabaseDashboardURL:
+    Description: 'URL of the database security dashboard'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ApplicationName}-${Environment}-database-security'
+
+  ComplianceConfiguration:
+    Description: 'Database compliance configuration summary'
+    Value: !Sub |
+      Encryption: ${EnableEncryption}
+      Backup Retention: ${BackupRetentionPeriod} days
+      Multi-AZ: ${MultiAZ}
+      Enhanced Monitoring: ${EnableEnhancedMonitoring}
+      Performance Insights: ${EnablePerformanceInsights}
+      Compliance Frameworks: ${ComplianceFrameworks}
+
+  SecurityConfiguration:
+    Description: 'Database security configuration summary'
+    Value: !Sub |
+      Public Access: ${EnablePublicAccess}
+      Deletion Protection: ${IsProduction}
+      Parameter Group: Custom security parameters applied
+      Option Group: ${IsOracleEngine}
+      CloudWatch Logs: ${EnableDBCloudWatchLogs}

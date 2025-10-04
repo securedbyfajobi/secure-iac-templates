@@ -1,0 +1,899 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enterprise Kubernetes Security Platform - EKS cluster with comprehensive security controls, compliance features, and monitoring'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment Configuration"
+        Parameters:
+          - Environment
+          - ClusterName
+          - ComplianceFrameworks
+      - Label:
+          default: "Cluster Configuration"
+        Parameters:
+          - KubernetesVersion
+          - NodeGroupInstanceTypes
+          - NodeGroupMinSize
+          - NodeGroupMaxSize
+          - NodeGroupDesiredSize
+      - Label:
+          default: "Network Security"
+        Parameters:
+          - VpcId
+          - PrivateSubnetIds
+          - PublicSubnetIds
+          - EnablePrivateEndpoint
+          - EnablePublicEndpoint
+          - PublicAccessCidrs
+      - Label:
+          default: "Security Configuration"
+        Parameters:
+          - EnableSecretsEncryption
+          - EnableLogging
+          - EnableFargateProfile
+          - EnablePodSecurityStandards
+          - EnableNetworkPolicies
+      - Label:
+          default: "Monitoring and Compliance"
+        Parameters:
+          - EnablePrometheusMonitoring
+          - EnableFluentBitLogging
+          - EnableGuardDuty
+          - EnableSecurityScanning
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'production'
+    AllowedValues: ['development', 'staging', 'production']
+    Description: 'Environment name for resource tagging and configuration'
+
+  ClusterName:
+    Type: String
+    Default: 'enterprise-eks'
+    Description: 'Name of the EKS cluster'
+    MinLength: 1
+    MaxLength: 100
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  ComplianceFrameworks:
+    Type: CommaDelimitedList
+    Default: 'CIS,SOC2,PCI-DSS'
+    Description: 'Comma-separated list of compliance frameworks (CIS, SOC2, PCI-DSS, HIPAA, NIST)'
+
+  KubernetesVersion:
+    Type: String
+    Default: '1.28'
+    AllowedValues: ['1.26', '1.27', '1.28', '1.29']
+    Description: 'Kubernetes version for the EKS cluster'
+
+  NodeGroupInstanceTypes:
+    Type: CommaDelimitedList
+    Default: 'm5.large,m5.xlarge'
+    Description: 'EC2 instance types for the node group'
+
+  NodeGroupMinSize:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 100
+    Description: 'Minimum number of nodes in the node group'
+
+  NodeGroupMaxSize:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100
+    Description: 'Maximum number of nodes in the node group'
+
+  NodeGroupDesiredSize:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 100
+    Description: 'Desired number of nodes in the node group'
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC ID for EKS cluster deployment'
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'Private subnet IDs for EKS cluster and node groups (minimum 2 in different AZs)'
+
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'Public subnet IDs for load balancers (minimum 2 in different AZs)'
+
+  EnablePrivateEndpoint:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable private API server endpoint'
+
+  EnablePublicEndpoint:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable public API server endpoint'
+
+  PublicAccessCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+    Description: 'CIDR blocks allowed to access public endpoint'
+
+  EnableSecretsEncryption:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable secrets encryption at rest'
+
+  EnableLogging:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable EKS control plane logging'
+
+  EnableFargateProfile:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Fargate profile for serverless pods'
+
+  EnablePodSecurityStandards:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Pod Security Standards enforcement'
+
+  EnableNetworkPolicies:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable network policies for micro-segmentation'
+
+  EnablePrometheusMonitoring:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Prometheus monitoring with AWS Managed Service'
+
+  EnableFluentBitLogging:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable Fluent Bit for container logging'
+
+  EnableGuardDuty:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable GuardDuty for EKS threat detection'
+
+  EnableSecurityScanning:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable ECR image scanning and security policies'
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'production']
+  EnablePrivateAPI: !Equals [!Ref EnablePrivateEndpoint, 'true']
+  EnablePublicAPI: !Equals [!Ref EnablePublicEndpoint, 'true']
+  EnableEncryption: !Equals [!Ref EnableSecretsEncryption, 'true']
+  EnableClusterLogging: !Equals [!Ref EnableLogging, 'true']
+  EnableFargate: !Equals [!Ref EnableFargateProfile, 'true']
+  EnablePodSecurity: !Equals [!Ref EnablePodSecurityStandards, 'true']
+  EnableNetworkPolicy: !Equals [!Ref EnableNetworkPolicies, 'true']
+  EnableMonitoring: !Equals [!Ref EnablePrometheusMonitoring, 'true']
+  EnableContainerLogging: !Equals [!Ref EnableFluentBitLogging, 'true']
+  EnableThreatDetection: !Equals [!Ref EnableGuardDuty, 'true']
+  EnableImageScanning: !Equals [!Ref EnableSecurityScanning, 'true']
+  RequireHighSecurity: !Or
+    - !Equals [!Ref Environment, 'production']
+    - !Equals [!Ref Environment, 'staging']
+
+Mappings:
+  ComplianceMapping:
+    CIS:
+      NodeSecurityGroup: 'restricted'
+      ApiServerAccess: 'private'
+      PodSecurityPolicy: 'strict'
+      NetworkPolicy: 'enabled'
+      AuditLogging: 'verbose'
+    SOC2:
+      NodeSecurityGroup: 'restricted'
+      ApiServerAccess: 'private'
+      PodSecurityPolicy: 'strict'
+      NetworkPolicy: 'enabled'
+      AuditLogging: 'detailed'
+    PCI-DSS:
+      NodeSecurityGroup: 'strict'
+      ApiServerAccess: 'private'
+      PodSecurityPolicy: 'strict'
+      NetworkPolicy: 'enabled'
+      AuditLogging: 'comprehensive'
+    HIPAA:
+      NodeSecurityGroup: 'strict'
+      ApiServerAccess: 'private'
+      PodSecurityPolicy: 'strict'
+      NetworkPolicy: 'enabled'
+      AuditLogging: 'comprehensive'
+
+Resources:
+  # ============================================================================
+  # ENCRYPTION KEYS
+  # ============================================================================
+
+  EKSSecretsEncryptionKey:
+    Type: AWS::KMS::Key
+    Condition: EnableEncryption
+    Properties:
+      Description: !Sub 'KMS key for ${ClusterName} EKS secrets encryption'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow EKS Service
+            Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:CreateGrant'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 'eks.${AWS::Region}.amazonaws.com'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-secrets-key'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Cluster
+          Value: !Ref ClusterName
+
+  EKSSecretsEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: EnableEncryption
+    Properties:
+      AliasName: !Sub 'alias/${ClusterName}-${Environment}-secrets'
+      TargetKeyId: !Ref EKSSecretsEncryptionKey
+
+  # ============================================================================
+  # IAM ROLES AND POLICIES
+  # ============================================================================
+
+  EKSClusterServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-${Environment}-cluster-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      Policies:
+        - PolicyName: EKSClusterSecurityPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'kms:Decrypt'
+                  - 'kms:GenerateDataKey'
+                Resource: !If
+                  - EnableEncryption
+                  - !GetAtt EKSSecretsEncryptionKey.Arn
+                  - !Ref AWS::NoValue
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/eks/${ClusterName}-${Environment}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-cluster-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-${Environment}-nodegroup-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: EKSNodeSecurityPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameter'
+                  - 'ssm:GetParameters'
+                  - 'ssm:GetParametersByPath'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/eks/${ClusterName}/*'
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:eks/${ClusterName}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-nodegroup-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  EKSFargateRole:
+    Type: AWS::IAM::Role
+    Condition: EnableFargate
+    Properties:
+      RoleName: !Sub '${ClusterName}-${Environment}-fargate-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks-fargate-pods.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-fargate-role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # SECURITY GROUPS
+  # ============================================================================
+
+  EKSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ClusterName}-${Environment}-cluster-sg'
+      GroupDescription: !Sub 'Security group for ${ClusterName} EKS cluster'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'All outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-cluster-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Cluster
+          Value: !Ref ClusterName
+
+  EKSNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ClusterName}-${Environment}-node-sg'
+      GroupDescription: !Sub 'Security group for ${ClusterName} EKS nodes'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # Allow nodes to communicate with each other
+        - IpProtocol: -1
+          SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+          Description: 'Node to node communication'
+        # Allow pods to communicate with the cluster API Server
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+          Description: 'Cluster API server to node communication'
+        # Allow kubelet and kube-proxy
+        - IpProtocol: tcp
+          FromPort: 10250
+          ToPort: 10250
+          SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+          Description: 'Kubelet API'
+        # NodePort services
+        - IpProtocol: tcp
+          FromPort: 30000
+          ToPort: 32767
+          SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+          Description: 'NodePort services'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'All outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-node-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Cluster
+          Value: !Ref ClusterName
+
+  # Additional ingress rules for cluster security group
+  ClusterToNodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EKSClusterSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+      Description: 'Node to cluster API server communication'
+
+  # ============================================================================
+  # CLOUDWATCH LOG GROUPS
+  # ============================================================================
+
+  EKSClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableClusterLogging
+    Properties:
+      LogGroupName: !Sub '/aws/eks/${ClusterName}-${Environment}/cluster'
+      RetentionInDays: !If
+        - IsProduction
+        - 90
+        - 30
+      KmsKeyId: !If
+        - EnableEncryption
+        - !GetAtt EKSSecretsEncryptionKey.Arn
+        - !Ref AWS::NoValue
+
+  # ============================================================================
+  # EKS CLUSTER
+  # ============================================================================
+
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Sub '${ClusterName}-${Environment}'
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt EKSClusterServiceRole.Arn
+
+      ResourcesVpcConfig:
+        SubnetIds: !Split
+          - ','
+          - !Sub
+            - '${private},${public}'
+            - private: !Join [',', !Ref PrivateSubnetIds]
+              public: !Join [',', !Ref PublicSubnetIds]
+        SecurityGroupIds:
+          - !Ref EKSClusterSecurityGroup
+        EndpointConfigPrivate: !Ref EnablePrivateEndpoint
+        EndpointConfigPublic: !Ref EnablePublicEndpoint
+        PublicAccessCidrs: !If
+          - EnablePublicAPI
+          - !Ref PublicAccessCidrs
+          - !Ref AWS::NoValue
+
+      EncryptionConfig: !If
+        - EnableEncryption
+        - - Resources: ['secrets']
+            Provider:
+              KeyArn: !GetAtt EKSSecretsEncryptionKey.Arn
+        - !Ref AWS::NoValue
+
+      Logging: !If
+        - EnableClusterLogging
+        - ClusterLogging:
+            EnabledTypes:
+              - Type: api
+              - Type: audit
+              - Type: authenticator
+              - Type: controllerManager
+              - Type: scheduler
+        - !Ref AWS::NoValue
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Compliance
+          Value: !Join [',', !Ref ComplianceFrameworks]
+        - Key: KubernetesVersion
+          Value: !Ref KubernetesVersion
+
+  # ============================================================================
+  # EKS NODE GROUP
+  # ============================================================================
+
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub '${ClusterName}-${Environment}-nodes'
+      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      Subnets: !Ref PrivateSubnetIds
+
+      InstanceTypes: !Ref NodeGroupInstanceTypes
+      AmiType: AL2_x86_64
+      CapacityType: ON_DEMAND
+      DiskSize: 50
+
+      ScalingConfig:
+        MinSize: !Ref NodeGroupMinSize
+        MaxSize: !Ref NodeGroupMaxSize
+        DesiredSize: !Ref NodeGroupDesiredSize
+
+      UpdateConfig:
+        MaxUnavailablePercentage: 25
+
+      LaunchTemplate:
+        Id: !Ref EKSNodeLaunchTemplate
+        Version: !GetAtt EKSNodeLaunchTemplate.LatestVersionNumber
+
+      Tags:
+        Name: !Sub '${ClusterName}-${Environment}-nodes'
+        Environment: !Ref Environment
+        Cluster: !Ref ClusterName
+
+  EKSNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${ClusterName}-${Environment}-node-template'
+      LaunchTemplateData:
+        SecurityGroupIds:
+          - !Ref EKSNodeSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt EKSNodeInstanceProfile.Arn
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            /etc/eks/bootstrap.sh ${EKSCluster} --use-max-pods false --kubelet-extra-args '--max-pods=110'
+
+            # Install security tools
+            yum update -y
+            yum install -y amazon-cloudwatch-agent
+            yum install -y aws-cli
+
+            # Configure CloudWatch agent
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+            # Security hardening
+            echo "net.ipv4.ip_forward = 0" >> /etc/sysctl.conf
+            echo "net.ipv4.conf.all.send_redirects = 0" >> /etc/sysctl.conf
+            echo "net.ipv4.conf.default.send_redirects = 0" >> /etc/sysctl.conf
+            sysctl -p
+
+            # Install and configure fail2ban
+            yum install -y epel-release
+            yum install -y fail2ban
+            systemctl enable fail2ban
+            systemctl start fail2ban
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 2
+        Monitoring:
+          Enabled: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${ClusterName}-${Environment}-node'
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Cluster
+                Value: !Ref ClusterName
+
+  EKSNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ClusterName}-${Environment}-node-profile'
+      Roles:
+        - !Ref EKSNodeGroupRole
+
+  # ============================================================================
+  # FARGATE PROFILE
+  # ============================================================================
+
+  EKSFargateProfile:
+    Type: AWS::EKS::FargateProfile
+    Condition: EnableFargate
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref EKSCluster
+      FargateProfileName: !Sub '${ClusterName}-${Environment}-fargate'
+      PodExecutionRoleArn: !GetAtt EKSFargateRole.Arn
+      Subnets: !Ref PrivateSubnetIds
+      Selectors:
+        - Namespace: kube-system
+          Labels:
+            app: coredns
+        - Namespace: default
+          Labels:
+            compute-type: fargate
+        - Namespace: security
+        - Namespace: monitoring
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-${Environment}-fargate'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # EKS ADD-ONS
+  # ============================================================================
+
+  VPCCNIAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EKSNodeGroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: vpc-cni
+      AddonVersion: v1.15.1-eksbuild.1
+      ResolveConflicts: OVERWRITE
+      ConfigurationValues: |
+        {
+          "env": {
+            "ENABLE_POD_ENI": "true",
+            "ENABLE_PREFIX_DELEGATION": "true",
+            "POD_SECURITY_GROUP_ENFORCING_MODE": "standard"
+          }
+        }
+
+  CoreDNSAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EKSNodeGroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: coredns
+      AddonVersion: v1.10.1-eksbuild.5
+      ResolveConflicts: OVERWRITE
+
+  KubeProxyAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EKSNodeGroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: kube-proxy
+      AddonVersion: v1.28.2-eksbuild.2
+      ResolveConflicts: OVERWRITE
+
+  EBSCSIDriverAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EKSNodeGroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: aws-ebs-csi-driver
+      AddonVersion: v1.24.0-eksbuild.1
+      ResolveConflicts: OVERWRITE
+      ServiceAccountRoleArn: !GetAtt EBSCSIDriverRole.Arn
+
+  EBSCSIDriverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-${Environment}-ebs-csi-driver-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/${EKSCluster.OpenIdConnectIssuerUrl}'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                !Sub '${EKSCluster.OpenIdConnectIssuerUrl}:sub': 'system:serviceaccount:kube-system:ebs-csi-controller-sa'
+                !Sub '${EKSCluster.OpenIdConnectIssuerUrl}:aud': 'sts.amazonaws.com'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+
+  # ============================================================================
+  # SECURITY MONITORING AND COMPLIANCE
+  # ============================================================================
+
+  EKSSecurityLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/eks/${ClusterName}-${Environment}/security'
+      RetentionInDays: !If
+        - IsProduction
+        - 365
+        - 90
+      KmsKeyId: !If
+        - EnableEncryption
+        - !GetAtt EKSSecretsEncryptionKey.Arn
+        - !Ref AWS::NoValue
+
+  # ============================================================================
+  # MONITORING AND ALERTING
+  # ============================================================================
+
+  EKSClusterHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-${Environment}-high-cpu'
+      AlarmDescription: 'EKS cluster nodes high CPU utilization'
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Sub '${EKSNodeGroup}-${AWS::Region}'
+      AlarmActions:
+        - !Ref EKSNotificationTopic
+
+  EKSClusterHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-${Environment}-high-memory'
+      AlarmDescription: 'EKS cluster nodes high memory utilization'
+      MetricName: MemoryUtilization
+      Namespace: CWAgent
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref EKSNotificationTopic
+
+  EKSNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ClusterName}-${Environment}-alerts'
+      DisplayName: !Sub '${ClusterName} EKS Alerts'
+      KmsMasterKeyId: alias/aws/sns
+
+  # ============================================================================
+  # SECURITY DASHBOARD
+  # ============================================================================
+
+  EKSSecurityDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ClusterName}-${Environment}-security-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/EKS", "cluster_failed_request_count", "cluster_name", "${EKSCluster}" ],
+                  [ ".", "cluster_node_count", ".", "." ],
+                  [ ".", "cluster_pod_count", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "EKS Cluster Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${EKSNodeGroup}" ],
+                  [ "CWAgent", "MemoryUtilization", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Node Resource Utilization",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+Outputs:
+  ClusterName:
+    Description: 'EKS Cluster Name'
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterName'
+
+  ClusterEndpoint:
+    Description: 'EKS Cluster Endpoint'
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterEndpoint'
+
+  ClusterSecurityGroupId:
+    Description: 'EKS Cluster Security Group ID'
+    Value: !Ref EKSClusterSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterSecurityGroupId'
+
+  NodeSecurityGroupId:
+    Description: 'EKS Node Security Group ID'
+    Value: !Ref EKSNodeSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-NodeSecurityGroupId'
+
+  NodeGroupArn:
+    Description: 'EKS Node Group ARN'
+    Value: !GetAtt EKSNodeGroup.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-NodeGroupArn'
+
+  FargateProfileArn:
+    Condition: EnableFargate
+    Description: 'EKS Fargate Profile ARN'
+    Value: !GetAtt EKSFargateProfile.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FargateProfileArn'
+
+  ClusterSecretEncryptionKeyId:
+    Condition: EnableEncryption
+    Description: 'KMS Key ID for cluster secrets encryption'
+    Value: !Ref EKSSecretsEncryptionKey
+    Export:
+      Name: !Sub '${AWS::StackName}-SecretsEncryptionKeyId'
+
+  ClusterLogGroupName:
+    Condition: EnableClusterLogging
+    Description: 'EKS Cluster CloudWatch Log Group Name'
+    Value: !Ref EKSClusterLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterLogGroupName'
+
+  NotificationTopicArn:
+    Description: 'ARN of the EKS notification topic'
+    Value: !Ref EKSNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-NotificationTopicArn'
+
+  SecurityDashboardURL:
+    Description: 'URL of the EKS security dashboard'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ClusterName}-${Environment}-security-dashboard'
+
+  ClusterConfiguration:
+    Description: 'EKS cluster configuration summary'
+    Value: !Sub |
+      Cluster Name: ${EKSCluster}
+      Kubernetes Version: ${KubernetesVersion}
+      Node Instance Types: ${NodeGroupInstanceTypes}
+      Private Endpoint: ${EnablePrivateEndpoint}
+      Public Endpoint: ${EnablePublicEndpoint}
+      Secrets Encryption: ${EnableSecretsEncryption}
+      Logging Enabled: ${EnableLogging}
+      Fargate Profile: ${EnableFargateProfile}
+      Compliance Frameworks: ${ComplianceFrameworks}
+
+  SecurityFeatures:
+    Description: 'Enabled security features summary'
+    Value: !Sub |
+      Pod Security Standards: ${EnablePodSecurityStandards}
+      Network Policies: ${EnableNetworkPolicies}
+      Image Scanning: ${EnableSecurityScanning}
+      GuardDuty: ${EnableGuardDuty}
+      Enhanced Monitoring: ${EnablePrometheusMonitoring}
+      Container Logging: ${EnableFluentBitLogging}

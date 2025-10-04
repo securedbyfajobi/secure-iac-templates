@@ -1,0 +1,414 @@
+---
+# SOC 2 Compliance Specific Tasks
+
+- name: Apply SOC 2 compliance controls
+  debug:
+    msg: "Applying SOC 2 Type II compliance controls"
+
+# =============================================================================
+# SOC 2 Trust Service Criteria: Security
+# =============================================================================
+
+- name: SOC 2 Security - Configure enhanced access controls
+  block:
+    - name: Enforce strong password policy for SOC 2
+      lineinfile:
+        path: /etc/pam.d/common-password
+        regexp: '^password.*pam_pwquality.so'
+        line: 'password requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1 enforce_for_root'
+        backup: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Configure password aging for SOC 2
+      lineinfile:
+        path: /etc/login.defs
+        regexp: "^{{ item.key }}"
+        line: "{{ item.key }} {{ item.value }}"
+        backup: yes
+      loop:
+        - { key: "PASS_MAX_DAYS", value: "90" }
+        - { key: "PASS_MIN_DAYS", value: "7" }
+        - { key: "PASS_WARN_AGE", value: "14" }
+
+    - name: Configure account lockout for SOC 2
+      lineinfile:
+        path: /etc/pam.d/common-auth
+        line: "auth required pam_tally2.so deny=3 unlock_time=900 even_deny_root"
+        insertafter: '^auth.*pam_unix.so'
+      when: ansible_os_family == "Debian"
+
+# =============================================================================
+# SOC 2 Trust Service Criteria: Availability
+# =============================================================================
+
+- name: SOC 2 Availability - Configure monitoring and alerting
+  block:
+    - name: Install monitoring tools for SOC 2
+      package:
+        name:
+          - htop
+          - iotop
+          - nethogs
+          - sysstat
+        state: present
+
+    - name: Configure system resource monitoring
+      template:
+        src: soc2-monitoring.sh.j2
+        dest: /usr/local/bin/soc2-monitoring.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule system monitoring for SOC 2
+      cron:
+        name: "SOC 2 system monitoring"
+        minute: "*/5"
+        job: "/usr/local/bin/soc2-monitoring.sh >> /var/log/security-baseline/soc2-monitoring.log 2>&1"
+        user: root
+
+    - name: Configure disk space monitoring
+      lineinfile:
+        path: /etc/crontab
+        line: "0 */6 * * * root df -h | awk 'NR>1 && $5+0 > 85 {print \"ALERT: Disk usage above 85% on \" $6}' | mail -s \"Disk Space Alert\" {{ baseline_security_monitoring.notification_email }}"
+      when: baseline_security_monitoring.notification_email != ""
+
+# =============================================================================
+# SOC 2 Trust Service Criteria: Processing Integrity
+# =============================================================================
+
+- name: SOC 2 Processing Integrity - Data validation and checksums
+  block:
+    - name: Install data integrity tools
+      package:
+        name:
+          - aide
+          - debsums
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Initialize AIDE database for SOC 2
+      command: aide --init
+      args:
+        creates: /var/lib/aide/aide.db.new
+      register: aide_init
+
+    - name: Move AIDE database to production location
+      command: mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+      when: aide_init.changed
+
+    - name: Schedule daily AIDE checks for SOC 2
+      cron:
+        name: "SOC 2 file integrity check"
+        minute: "0"
+        hour: "3"
+        job: "/usr/bin/aide --check >> /var/log/security-baseline/soc2-integrity.log 2>&1"
+        user: root
+
+    - name: Configure file permission monitoring
+      template:
+        src: soc2-file-monitor.sh.j2
+        dest: /usr/local/bin/soc2-file-monitor.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+# =============================================================================
+# SOC 2 Trust Service Criteria: Confidentiality
+# =============================================================================
+
+- name: SOC 2 Confidentiality - Encryption and data protection
+  block:
+    - name: Ensure encryption tools are available
+      package:
+        name:
+          - cryptsetup
+          - ecryptfs-utils
+        state: present
+
+    - name: Configure umask for confidentiality
+      lineinfile:
+        path: /etc/profile
+        regexp: '^umask'
+        line: 'umask 027'
+        backup: yes
+
+    - name: Set secure permissions on sensitive directories
+      file:
+        path: "{{ item }}"
+        mode: '0750'
+        owner: root
+        group: root
+      loop:
+        - /etc/ssh
+        - /etc/ssl/private
+        - /etc/audit
+        - /var/log/audit
+      ignore_errors: yes
+
+    - name: Configure data encryption verification
+      template:
+        src: soc2-encryption-check.sh.j2
+        dest: /usr/local/bin/soc2-encryption-check.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+# =============================================================================
+# SOC 2 Trust Service Criteria: Privacy
+# =============================================================================
+
+- name: SOC 2 Privacy - Data handling and retention
+  block:
+    - name: Configure log retention for SOC 2
+      template:
+        src: soc2-logrotate.j2
+        dest: /etc/logrotate.d/soc2-logs
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Create data classification script
+      template:
+        src: soc2-data-classification.sh.j2
+        dest: /usr/local/bin/soc2-data-classification.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure secure deletion tools
+      package:
+        name: secure-delete
+        state: present
+      ignore_errors: yes
+
+# =============================================================================
+# SOC 2 Logging and Audit Requirements
+# =============================================================================
+
+- name: SOC 2 Enhanced Logging
+  block:
+    - name: Configure enhanced rsyslog for SOC 2
+      blockinfile:
+        path: /etc/rsyslog.conf
+        marker: "# {mark} SOC 2 Enhanced Logging"
+        block: |
+          # SOC 2 specific logging requirements
+          $ModLoad imfile
+
+          # Enhanced authentication logging
+          auth,authpriv.*    /var/log/auth.log
+
+          # System activity logging
+          daemon.*           /var/log/daemon.log
+          kern.*             /var/log/kern.log
+
+          # User activity logging
+          user.*             /var/log/user.log
+
+          # Mail system logging
+          mail.*             /var/log/mail.log
+
+          # Cron logging
+          cron.*             /var/log/cron.log
+
+          # All emergency messages to console
+          *.emerg            :omusrmsg:*
+
+          # Forward critical events to admin
+          *.crit             :omusrmsg:root
+      notify: restart rsyslog
+
+    - name: Create SOC 2 audit log analyzer
+      template:
+        src: soc2-audit-analyzer.sh.j2
+        dest: /usr/local/bin/soc2-audit-analyzer.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule SOC 2 audit analysis
+      cron:
+        name: "SOC 2 audit log analysis"
+        minute: "0"
+        hour: "1"
+        job: "/usr/local/bin/soc2-audit-analyzer.sh >> /var/log/security-baseline/soc2-audit-analysis.log 2>&1"
+        user: root
+
+# =============================================================================
+# SOC 2 Access Control Requirements
+# =============================================================================
+
+- name: SOC 2 Access Control
+  block:
+    - name: Configure sudo logging for SOC 2
+      lineinfile:
+        path: /etc/sudoers
+        line: "Defaults logfile=/var/log/sudo.log"
+        validate: 'visudo -cf %s'
+        backup: yes
+
+    - name: Configure sudo session timeout
+      lineinfile:
+        path: /etc/sudoers
+        line: "Defaults timestamp_timeout=15"
+        validate: 'visudo -cf %s'
+        backup: yes
+
+    - name: Create user access review script
+      template:
+        src: soc2-access-review.sh.j2
+        dest: /usr/local/bin/soc2-access-review.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule monthly access reviews
+      cron:
+        name: "SOC 2 access review"
+        minute: "0"
+        hour: "0"
+        day: "1"
+        job: "/usr/local/bin/soc2-access-review.sh >> /var/log/security-baseline/soc2-access-review.log 2>&1"
+        user: root
+
+# =============================================================================
+# SOC 2 Change Management
+# =============================================================================
+
+- name: SOC 2 Change Management
+  block:
+    - name: Configure system change tracking
+      template:
+        src: soc2-change-tracker.sh.j2
+        dest: /usr/local/bin/soc2-change-tracker.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule change tracking
+      cron:
+        name: "SOC 2 change tracking"
+        minute: "0"
+        hour: "*/6"
+        job: "/usr/local/bin/soc2-change-tracker.sh >> /var/log/security-baseline/soc2-changes.log 2>&1"
+        user: root
+
+    - name: Create configuration backup for SOC 2
+      template:
+        src: soc2-config-backup.sh.j2
+        dest: /usr/local/bin/soc2-config-backup.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule daily configuration backups
+      cron:
+        name: "SOC 2 configuration backup"
+        minute: "30"
+        hour: "2"
+        job: "/usr/local/bin/soc2-config-backup.sh >> /var/log/security-baseline/soc2-backup.log 2>&1"
+        user: root
+
+# =============================================================================
+# SOC 2 Incident Response
+# =============================================================================
+
+- name: SOC 2 Incident Response Preparation
+  block:
+    - name: Create incident response toolkit directory
+      file:
+        path: /opt/soc2-incident-response
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Install incident response tools
+      package:
+        name:
+          - netcat
+          - tcpdump
+          - strace
+          - lsof
+        state: present
+
+    - name: Create incident response script
+      template:
+        src: soc2-incident-response.sh.j2
+        dest: /opt/soc2-incident-response/incident-response.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create security event detector
+      template:
+        src: soc2-security-events.sh.j2
+        dest: /usr/local/bin/soc2-security-events.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule security event monitoring
+      cron:
+        name: "SOC 2 security event monitoring"
+        minute: "*/10"
+        job: "/usr/local/bin/soc2-security-events.sh >> /var/log/security-baseline/soc2-security-events.log 2>&1"
+        user: root
+
+# =============================================================================
+# SOC 2 Compliance Reporting
+# =============================================================================
+
+- name: SOC 2 Compliance Reporting
+  block:
+    - name: Create SOC 2 compliance report generator
+      template:
+        src: soc2-compliance-report.sh.j2
+        dest: /usr/local/bin/soc2-compliance-report.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Schedule weekly SOC 2 compliance reports
+      cron:
+        name: "SOC 2 compliance reporting"
+        minute: "0"
+        hour: "6"
+        weekday: "1"
+        job: "/usr/local/bin/soc2-compliance-report.sh >> /var/log/security-baseline/soc2-compliance.log 2>&1"
+        user: root
+
+    - name: Create SOC 2 evidence collection script
+      template:
+        src: soc2-evidence-collection.sh.j2
+        dest: /usr/local/bin/soc2-evidence-collection.sh
+        owner: root
+        group: root
+        mode: '0755'
+
+- name: Log SOC 2 compliance configuration
+  lineinfile:
+    path: /var/log/security-baseline/compliance.log
+    create: yes
+    owner: root
+    group: root
+    mode: '0640'
+    line: "{{ ansible_date_time.iso8601 }} - SOC 2 Type II compliance controls applied successfully"
+
+- name: SOC 2 compliance summary
+  debug:
+    msg:
+      - "SOC 2 Type II compliance controls have been applied"
+      - "Trust Service Criteria implemented:"
+      - "  - Security: Enhanced access controls and password policies"
+      - "  - Availability: System monitoring and alerting"
+      - "  - Processing Integrity: File integrity monitoring with AIDE"
+      - "  - Confidentiality: Encryption verification and secure permissions"
+      - "  - Privacy: Data classification and retention policies"
+      - "Additional features:"
+      - "  - Enhanced audit logging and analysis"
+      - "  - Access control monitoring and reviews"
+      - "  - Change management tracking"
+      - "  - Incident response preparation"
+      - "  - Automated compliance reporting"

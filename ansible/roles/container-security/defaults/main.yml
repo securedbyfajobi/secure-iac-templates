@@ -1,0 +1,420 @@
+---
+# Container Security Role Default Variables
+
+# =============================================================================
+# GENERAL CONTAINER SECURITY CONFIGURATION
+# =============================================================================
+
+# Container runtime configuration
+container_security_runtime: "docker"  # docker, containerd, cri-o, podman
+
+# Apply baseline security hardening
+container_security_apply_baseline: true
+
+# Security compliance level
+container_security_compliance_level: "high"  # low, medium, high, critical
+
+# Environment type
+container_security_environment: "production"  # development, staging, production
+
+# Compliance frameworks
+container_security_compliance_frameworks:
+  - "CIS"
+  # - "NIST"
+  # - "PCI-DSS"
+
+# =============================================================================
+# DOCKER SECURITY CONFIGURATION
+# =============================================================================
+
+container_security_docker:
+  # Docker daemon configuration
+  daemon_config:
+    log_driver: "json-file"
+    log_opts:
+      max_size: "10m"
+      max_file: "5"
+    storage_driver: "overlay2"
+    live_restore: true
+    userland_proxy: false
+    no_new_privileges: true
+    seccomp_profile: "/etc/docker/seccomp/default.json"
+    apparmor_profile: "docker-default"
+
+  # Docker daemon security options
+  security_options:
+    tls_enabled: true
+    tls_verify: true
+    disable_legacy_registry: true
+    enable_content_trust: true
+    disable_userland_proxy: true
+    disable_inter_container_communication: false
+    enable_selinux: false  # Set to true if SELinux is available
+    enable_apparmor: true  # Set to false if AppArmor is not available
+
+  # Docker networking
+  networking:
+    disable_default_bridge: false
+    custom_bridge_network: "enterprise-bridge"
+    enable_network_encryption: true
+    isolate_containers: true
+
+  # Resource limits
+  resource_limits:
+    default_ulimits:
+      - "nofile=65536:65536"
+      - "nproc=4096:4096"
+    default_memory_limit: "512m"
+    default_cpu_limit: "1.0"
+
+  # Registry security
+  registry:
+    disable_v1_registry: true
+    trusted_registries:
+      - "registry.company.com"
+      - "quay.io"
+      - "gcr.io"
+    blocked_registries:
+      - "docker.io"  # Block public Docker Hub in production
+    enable_image_scanning: true
+
+# =============================================================================
+# KUBERNETES SECURITY CONFIGURATION
+# =============================================================================
+
+container_security_kubernetes:
+  # Enable Kubernetes security hardening
+  enabled: false
+
+  # Kubernetes version
+  version: "1.28"
+
+  # API server security
+  api_server:
+    enable_admission_controllers:
+      - "NamespaceLifecycle"
+      - "LimitRanger"
+      - "ServiceAccount"
+      - "DefaultStorageClass"
+      - "ResourceQuota"
+      - "PodSecurityPolicy"
+      - "NodeRestriction"
+      - "SecurityContextDeny"
+    audit_logging: true
+    audit_log_path: "/var/log/kubernetes/audit.log"
+    audit_log_maxage: 30
+    audit_log_maxbackup: 10
+    audit_log_maxsize: 100
+
+  # etcd security
+  etcd:
+    enable_encryption: true
+    peer_tls: true
+    client_tls: true
+
+  # kubelet security
+  kubelet:
+    read_only_port: 0
+    anonymous_auth: false
+    authorization_mode: "Webhook"
+    client_ca_file: "/etc/kubernetes/pki/ca.crt"
+    rotate_certificates: true
+
+  # Network policies
+  network_policies:
+    enabled: true
+    default_deny_all: true
+    allow_dns: true
+
+  # Pod security standards
+  pod_security:
+    enabled: true
+    enforce: "restricted"
+    audit: "restricted"
+    warn: "restricted"
+
+# =============================================================================
+# CONTAINER IMAGE SECURITY
+# =============================================================================
+
+container_security_images:
+  # Image scanning
+  scanning:
+    enabled: true
+    scanner_tools:
+      - "trivy"
+      - "clair"
+    scan_on_push: true
+    scan_on_pull: true
+    vulnerability_threshold: "HIGH"
+    fail_on_critical: true
+
+  # Image signing
+  signing:
+    enabled: true
+    require_signed_images: true
+    trusted_signers:
+      - "security@company.com"
+    notary_server: "notary.company.com"
+
+  # Base image restrictions
+  base_images:
+    allowed_base_images:
+      - "alpine:3.18"
+      - "ubuntu:22.04"
+      - "registry.company.com/base/*"
+    blocked_base_images:
+      - "*:latest"
+      - "ubuntu:*"  # Block unless specific version
+
+  # Image policies
+  policies:
+    no_root_user: true
+    no_privileged_containers: true
+    read_only_root_filesystem: true
+    no_host_network: true
+    no_host_pid: true
+    no_host_ipc: true
+
+# =============================================================================
+# RUNTIME SECURITY
+# =============================================================================
+
+container_security_runtime:
+  # Container runtime security
+  runtime_protection:
+    enabled: true
+    tools:
+      - "falco"
+      - "sysdig"
+    monitoring_rules:
+      - "File system modifications"
+      - "Network activity"
+      - "Process execution"
+      - "System call monitoring"
+
+  # Security profiles
+  security_profiles:
+    seccomp:
+      enabled: true
+      default_profile: "/etc/docker/seccomp/default.json"
+      custom_profiles_path: "/etc/docker/seccomp/custom"
+
+    apparmor:
+      enabled: true
+      default_profile: "docker-default"
+      custom_profiles_path: "/etc/apparmor.d/docker"
+
+    selinux:
+      enabled: false
+      default_context: "system_u:system_r:container_t:s0"
+
+  # Capability management
+  capabilities:
+    drop_all: true
+    allowed_capabilities:
+      - "NET_BIND_SERVICE"
+      - "CHOWN"
+      - "DAC_OVERRIDE"
+    blocked_capabilities:
+      - "SYS_ADMIN"
+      - "NET_ADMIN"
+      - "SYS_TIME"
+      - "SYS_MODULE"
+
+# =============================================================================
+# COMPLIANCE-SPECIFIC CONFIGURATIONS
+# =============================================================================
+
+# CIS Docker Benchmark compliance
+container_security_cis_docker:
+  version: "1.6.0"
+
+  # CIS 1.1 - Host Configuration
+  host_config:
+    separate_partition: true
+    docker_service_user: "docker"
+    docker_socket_permissions: "660"
+    docker_directory_permissions: "755"
+    registry_cert_permissions: "444"
+
+  # CIS 2.1 - Docker daemon configuration
+  daemon_config:
+    network_traffic_authorization: true
+    logging_level: "info"
+    docker_client_commands_authorization: true
+    tls_authentication: true
+    default_seccomp_profile: true
+    experimental_features: false
+
+# CIS Kubernetes Benchmark compliance
+container_security_cis_kubernetes:
+  version: "1.7.0"
+
+  # Master node security
+  master_node:
+    api_server_insecure_port: false
+    kubelet_https: true
+    kubelet_client_certificate_authentication: true
+    etcd_client_certificate_authentication: true
+
+  # Worker node security
+  worker_node:
+    kubelet_authorization_mode_webhook: true
+    kubelet_authentication_webhook: true
+    kubelet_read_only_port_zero: true
+
+# =============================================================================
+# MONITORING AND LOGGING
+# =============================================================================
+
+container_security_monitoring:
+  # Log aggregation
+  logging:
+    central_logging: true
+    log_driver: "json-file"
+    log_retention_days: 30
+    syslog_server: ""
+    syslog_port: 514
+
+  # Metrics collection
+  metrics:
+    enabled: true
+    prometheus_endpoint: true
+    collect_runtime_metrics: true
+    collect_image_metrics: true
+
+  # Alerting
+  alerting:
+    enabled: true
+    alert_on_privileged_containers: true
+    alert_on_host_network_containers: true
+    alert_on_root_user_containers: true
+    alert_on_image_vulnerabilities: true
+
+  # SIEM integration
+  siem:
+    enabled: false
+    siem_endpoint: ""
+    api_key: ""
+
+# =============================================================================
+# NETWORK SECURITY
+# =============================================================================
+
+container_security_network:
+  # Network isolation
+  isolation:
+    default_bridge_restriction: true
+    custom_networks_only: true
+    inter_container_communication: false
+
+  # Firewall rules
+  firewall:
+    enable_docker_iptables: true
+    custom_chains: true
+    log_dropped_packets: true
+
+  # Service mesh security
+  service_mesh:
+    enabled: false
+    tool: "istio"  # istio, linkerd, consul-connect
+    mtls_enabled: true
+    policy_enforcement: true
+
+# =============================================================================
+# SECRETS MANAGEMENT
+# =============================================================================
+
+container_security_secrets:
+  # External secrets management
+  external_secrets:
+    enabled: true
+    provider: "vault"  # vault, aws-secrets-manager, azure-keyvault
+    endpoint: "https://vault.company.com"
+
+  # Kubernetes secrets
+  kubernetes_secrets:
+    encrypt_at_rest: true
+    rotate_keys: true
+    audit_access: true
+
+  # Docker secrets
+  docker_secrets:
+    use_docker_secrets: true
+    external_secrets_only: false
+
+# =============================================================================
+# BACKUP AND DISASTER RECOVERY
+# =============================================================================
+
+container_security_backup:
+  # Container data backup
+  data_backup:
+    enabled: true
+    backup_volumes: true
+    backup_configs: true
+    backup_secrets: false  # Handled by external secrets management
+
+  # Image backup
+  image_backup:
+    backup_images: true
+    backup_registry: "backup.registry.company.com"
+    retention_days: 90
+
+  # Disaster recovery
+  disaster_recovery:
+    cross_region_replication: true
+    automated_failover: false
+    recovery_testing: true
+
+# =============================================================================
+# VULNERABILITY MANAGEMENT
+# =============================================================================
+
+container_security_vulnerability:
+  # Vulnerability scanning
+  scanning:
+    continuous_scanning: true
+    scan_frequency: "daily"
+    vulnerability_databases:
+      - "NVD"
+      - "CVE"
+      - "Alpine SecDB"
+      - "Red Hat Security Data"
+
+  # Patch management
+  patching:
+    auto_patch_base_images: false
+    patch_notification: true
+    critical_patch_deadline: 48  # hours
+
+  # Compliance reporting
+  reporting:
+    vulnerability_reports: true
+    compliance_dashboards: true
+    executive_summaries: true
+
+# =============================================================================
+# DEVELOPMENT AND CI/CD SECURITY
+# =============================================================================
+
+container_security_cicd:
+  # Pipeline security
+  pipeline_security:
+    secure_build_environment: true
+    image_scanning_gates: true
+    security_tests: true
+    dependency_checking: true
+
+  # Registry integration
+  registry_integration:
+    push_signed_images_only: true
+    scan_before_push: true
+    quarantine_vulnerable_images: true
+
+  # Development guidelines
+  development:
+    security_linting: true
+    dockerfile_best_practices: true
+    security_training_required: true
